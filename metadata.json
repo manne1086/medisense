@@ -1,0 +1,7 @@
+{
+  "name": "Copy of MediSense AI",
+  "description": "Agentic Medical Report Analyser & Diagnostic Assistant featuring Bayesian Triage and RAG-powered trend analysis.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
