@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { MessageCircle, X, Send, Stethoscope } from './Icons';
+import { MessageCircle, X, Send, Stethoscope, Mic, Upload } from './Icons';
 import { chatWithAssistant } from '../services/grokService';
 import { ChatMessage } from '../types';
 
@@ -86,19 +86,25 @@ export const FloatingAssistant: React.FC = () => {
 
           {/* Input */}
           <div className="p-3 bg-white/60 border-t border-white/50">
-            <div className="flex gap-2">
+            <div className="flex items-center gap-0 bg-white/80 rounded-xl px-1 py-1 border-none focus-within:ring-2 focus-within:ring-primary/50">
+              <button className="p-2 text-gray-400 hover:text-primary transition-colors">
+                <Upload size={18} />
+              </button>
               <input
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSend()}
                 placeholder="Ask about your health..."
-                className="flex-1 bg-white/80 border-none rounded-xl px-4 py-2 text-sm focus:ring-2 focus:ring-primary/50 outline-none placeholder:text-gray-400"
+                className="flex-1 bg-transparent border-none px-2 py-2 text-sm outline-none placeholder:text-gray-400"
               />
+              <button className="p-2 text-gray-400 hover:text-primary transition-colors">
+                <Mic size={18} />
+              </button>
               <button
                 onClick={handleSend}
                 disabled={isLoading}
-                className="bg-primary hover:bg-primary/90 text-white p-2 rounded-xl transition-colors disabled:opacity-50"
+                className="bg-primary hover:bg-primary/90 text-white p-2 rounded-lg transition-colors disabled:opacity-50 mr-1"
               >
                 <Send size={18} />
               </button>

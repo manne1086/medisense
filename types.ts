@@ -57,11 +57,31 @@ export interface LifestyleIntervention {
 
 // --- Longitudinal & Agentic Analysis Types ---
 
+export type BiomarkerCategory = 'Metabolic' | 'Cardiovascular' | 'Hematology' | 'Renal' | 'Other';
+export type InsightConfidence = 'High' | 'Medium' | 'Low';
+export type PatientOverallStatus = 'Looks Okay' | 'Monitor' | 'Book Doctor Visit' | 'Needs Urgent Review';
+
 export interface Biomarker {
   name: string;
   value: number;
   unit: string;
-  category: 'Metabolic' | 'Cardiovascular' | 'Hematology' | 'Renal' | 'Other';
+  category: BiomarkerCategory;
+}
+
+export interface AnalysisOverview {
+  overallStatus: PatientOverallStatus;
+  headline: string;
+  keyConcerns: string[];
+  stableIndicators: string[];
+  nextSteps: string[];
+  questionsToAsk: string[];
+  confidence: InsightConfidence;
+}
+
+export interface AnalysisCategoryBreakdown {
+  name: BiomarkerCategory;
+  total: number;
+  flagged: number;
 }
 
 export interface MedicalReport {
@@ -71,11 +91,7 @@ export interface MedicalReport {
   biomarkers: Biomarker[];
   prescriptions?: Medication[];
   interventions?: LifestyleIntervention[];
-  analysis?: {
-    summary: string;
-    risks: RiskCondition[];
-    preventiveMeasures: LifestyleIntervention[];
-  };
+  analysis?: MedicalReportAnalysis;
 }
 
 export interface RiskCondition {
@@ -95,12 +111,21 @@ export interface ComparativeMetric {
   status: 'Normal' | 'Warning' | 'Critical';
 }
 
-export interface AIAnalysisResult {
-  reportId: string;
+export interface MedicalReportAnalysis {
   summary: string;
-  comparisons: ComparativeMetric[];
+  plainLanguageSummary?: string;
+  overview?: AnalysisOverview;
+  reportType?: string;
+  reportDate?: string;
+  extractionQuality?: InsightConfidence;
+  categoryBreakdown?: AnalysisCategoryBreakdown[];
   risks: RiskCondition[];
   preventiveMeasures: LifestyleIntervention[];
+}
+
+export interface AIAnalysisResult extends MedicalReportAnalysis {
+  reportId: string;
+  comparisons: ComparativeMetric[];
 }
 
 // --- Legacy / Visualization Types ---

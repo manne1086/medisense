@@ -1,15 +1,16 @@
 
 import React, { useState, useEffect } from 'react';
-import { ModuleTriage } from './components/ModuleTriage';
 import { ModuleAnalysis } from './components/ModuleAnalysis';
 import { ModulePrescription } from './components/ModulePrescription';
+import { AIDoctor } from './components/AIDoctor';
+import { MyReports } from './components/MyReports';
 import { FloatingAssistant } from './components/FloatingAssistant';
-import { AlertTriangle, Activity, FileText, Pill } from './components/Icons';
+import { AlertTriangle, Activity, FileText, Pill, ClipboardList } from './components/Icons';
 import { Login } from './components/Login';
 import { isAuthenticated, handleAuthCallback, logout } from './services/authService';
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'triage' | 'analysis' | 'prescription'>('triage');
+  const [activeTab, setActiveTab] = useState<'triage' | 'analysis' | 'prescription' | 'myreports'>('triage');
   const [isAuth, setIsAuth] = useState(false);
 
   useEffect(() => {
@@ -130,6 +131,17 @@ function App() {
                     <Pill size={18} />
                     Prescriptions
                 </button>
+                <button
+                    onClick={() => setActiveTab('myreports')}
+                    className={`px-6 py-3 rounded-xl font-medium text-sm transition-all duration-300 flex items-center gap-2 whitespace-nowrap ${
+                        activeTab === 'myreports' 
+                        ? 'bg-blue-600 text-white shadow-md' 
+                        : 'text-gray-600 hover:bg-white/50 hover:text-gray-900'
+                    }`}
+                >
+                    <ClipboardList size={18} />
+                    My Reports
+                </button>
             </div>
         </div>
 
@@ -137,7 +149,7 @@ function App() {
         <div className="min-h-[600px]">
             {activeTab === 'triage' && (
                 <div className="animate-in fade-in slide-in-from-bottom-8 duration-500 ease-out">
-                    <ModuleTriage />
+                    <AIDoctor />
                 </div>
             )}
             {activeTab === 'analysis' && (
@@ -148,6 +160,11 @@ function App() {
             {activeTab === 'prescription' && (
                 <div className="animate-in fade-in slide-in-from-bottom-8 duration-500 ease-out">
                     <ModulePrescription />
+                </div>
+            )}
+            {activeTab === 'myreports' && (
+                <div className="animate-in fade-in slide-in-from-bottom-8 duration-500 ease-out">
+                    <MyReports />
                 </div>
             )}
         </div>
