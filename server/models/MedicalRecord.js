@@ -30,6 +30,24 @@ const MedicalRecordSchema = new mongoose.Schema({
   }],
   analysis: {
     summary: String,
+    plainLanguageSummary: String,
+    overview: {
+      overallStatus: String,
+      headline: String,
+      keyConcerns: [String],
+      stableIndicators: [String],
+      nextSteps: [String],
+      questionsToAsk: [String],
+      confidence: String
+    },
+    reportType: String,
+    reportDate: String,
+    extractionQuality: String,
+    categoryBreakdown: [{
+      name: String,
+      total: Number,
+      flagged: Number
+    }],
     risks: [{
       condition: String,
       probability: String,

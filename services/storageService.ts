@@ -16,7 +16,12 @@ export const getHistory = async (): Promise<MedicalReport[]> => {
       }
     });
     if (!response.ok) throw new Error('Failed to fetch history');
-    return await response.json();
+    const data = await response.json();
+    // Map MongoDB _id to id field
+    return data.map((record: any) => ({
+      ...record,
+      id: record._id || record.id
+    }));
   } catch (error) {
     console.error('Error fetching history:', error);
     return [];
@@ -47,7 +52,54 @@ export const saveReport = async (report: MedicalReport): Promise<MedicalReport[]
   }
 };
 
-export const clearHistory = () => {
-  localStorage.removeItem('medisense_auth_token');
-  window.location.reload();
+export const clearHistory = async (): Promise<boolean> => {
+  const token = getAuthToken();
+  if (!token) {
+    console.error('No auth token found');
+    return false;
+  }
+
+  try {
+    const response = await fetch(`${API_URL}/records`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to clear history');
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Error clearing history:', error);
+    return false;
+  }
+};
+
+export const deleteReport = async (reportId: string): Promise<boolean> => {
+  const token = getAuthToken();
+  if (!token) {
+    console.error('No auth token found');
+    return false;
+  }
+
+  try {
+    const response = await fetch(`${API_URL}/records/${reportId}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to delete report');
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Error deleting report:', error);
+    return false;
+  }
 };

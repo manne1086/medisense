@@ -127,4 +127,25 @@ app.get('/api/records', auth, async (req, res) => {
   }
 });
 
+app.delete('/api/records/:id', auth, async (req, res) => {
+  try {
+    const result = await MedicalRecord.deleteOne({ _id: req.params.id, user: req.user._id });
+    if (result.deletedCount === 0) {
+      return res.status(404).send({ error: 'Report not found' });
+    }
+    res.send({ success: true, message: 'Report deleted' });
+  } catch (e) {
+    res.status(500).send(e);
+  }
+});
+
+app.delete('/api/records', auth, async (req, res) => {
+  try {
+    const result = await MedicalRecord.deleteMany({ user: req.user._id });
+    res.send({ success: true, deletedCount: result.deletedCount || 0 });
+  } catch (e) {
+    res.status(500).send(e);
+  }
+});
+
 // Server start moved to MongoDB connection block

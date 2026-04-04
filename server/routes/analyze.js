@@ -2,7 +2,55 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const Groq = require('groq-sdk');
-const pdfParse = require('pdf-parse');
+
+// ── Polyfills for Node.js environment ──
+if (typeof global.DOMMatrix === 'undefined') {
+    global.DOMMatrix = class DOMMatrix {
+        constructor(init = 'none') {
+            this.a = 1;
+            this.b = 0;
+            this.c = 0;
+            this.d = 1;
+            this.e = 0;
+            this.f = 0;
+        }
+    };
+}
+
+// ── Custom PDF text extraction using pdfjs ──
+const extractPdfText = async (buffer) => {
+    const pdfjsLib = require('pdfjs-dist');
+    
+    try {
+        console.log("Starting PDF extraction, buffer size:", buffer.length);
+        // Convert Buffer to Uint8Array for pdfjs-dist
+        const uint8Array = new Uint8Array(buffer);
+        const pdf = await pdfjsLib.getDocument({ data: uint8Array }).promise;
+        console.log("PDF loaded, number of pages:", pdf.numPages);
+        let fullText = '';
+        
+        for (let i = 1; i <= pdf.numPages; i++) {
+            try {
+                const page = await pdf.getPage(i);
+                const textContent = await page.getTextContent();
+                const pageText = textContent.items.map(item => item.str).join(' ');
+                console.log(`Page ${i}: extracted ${pageText.length} characters`);
+                fullText += pageText + '\n';
+            } catch (e) {
+                console.warn(`Could not extract text from page ${i}:`, e.message);
+            }
+        }
+        
+        console.log("Total extracted:", fullText.length, "characters");
+        return fullText;
+    } catch (e) {
+        console.error('PDF extraction error:', e);
+        throw new Error(`Failed to extract text from PDF: ${e.message}`);
+    }
+};
+
+// Test the function once at startup
+console.log("PDF extraction module loaded with pdfjs-dist backend");
 
 // Configure Multer for memory storage
 const storage = multer.memoryStorage();
@@ -47,10 +95,7 @@ router.post('/', uploadMiddleware, async (req, res) => {
             const fileBuffer = req.file.buffer;
 
             if (mimeType === 'application/pdf') {
-                const pdfData = await pdfParse(fileBuffer);
-                const text = pdfData.text;
-                // Use Llama-3 for text summarization
-                // Groq handles context well, but we should be mindful of token limits.
+                const text = await extractPdfText(fileBuffer);
                 const truncatedText = text.substring(0, 15000); // Reasonable limit
 
                 const completion = await groq.chat.completions.create({
@@ -58,7 +103,7 @@ router.post('/', uploadMiddleware, async (req, res) => {
                         { role: "system", content: "Summarize the following PDF document." },
                         { role: "user", content: truncatedText }
                     ],
-                    model: "llama-3.1-8b-instant", // Use text model for text analysis
+                    model: "llama-3.3-70b-versatile",
                 });
 
                 return res.json({ type: 'pdf_summary', data: { summary_text: completion.choices[0]?.message?.content || "No summary generated." } });
@@ -107,9 +152,9 @@ router.post('/', uploadMiddleware, async (req, res) => {
                                 ]
                             }
                         ],
-                        model: "meta-llama/llama-4-scout-17b-16e-instruct", // Updated to Llama 4 Scout Vision
+                        model: "llama-3.2-11b-vision-preview",
                         temperature: 0.1,
-                        response_format: { type: "json_object" } // Force JSON if supported, otherwise rely on prompt
+                        response_format: { type: "json_object" }
                     });
 
                     const responseText = completion.choices[0]?.message?.content;
@@ -139,7 +184,7 @@ router.post('/', uploadMiddleware, async (req, res) => {
                                 ]
                             }
                         ],
-                        model: "meta-llama/llama-4-scout-17b-16e-instruct"
+                        model: "llama-3.2-11b-vision-preview"
                     });
 
                     return res.json({ type: 'image_caption', data: [{ generated_text: completion.choices[0]?.message?.content }] });
@@ -169,7 +214,7 @@ router.post('/', uploadMiddleware, async (req, res) => {
                         { role: "system", content: "You are an expert pharmacist AI. Return JSON only." },
                         { role: "user", content: prompt }
                     ],
-                    model: "llama-3.1-8b-instant", // Use text model for text input
+                    model: "llama-3.3-70b-versatile",
                     temperature: 0.1,
                     response_format: { type: "json_object" }
                 });
@@ -188,6 +233,107 @@ router.post('/', uploadMiddleware, async (req, res) => {
     } catch (error) {
         console.error('Groq Analysis Error:', JSON.stringify(error, null, 2));
         res.status(500).json({ error: 'Failed to analyze content', details: error.message });
+    }
+});
+
+// ── PDF Medical Report Extraction Route ─────────────────────────────
+router.post('/extract-pdf', uploadMiddleware, async (req, res) => {
+    console.log("PDF extraction route hit");
+
+    if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    const mimeType = req.file.mimetype;
+    if (mimeType !== 'application/pdf') {
+        return res.status(400).json({ error: 'Only PDF files are supported on this endpoint' });
+    }
+
+    try {
+        const fileBuffer = req.file.buffer;
+        const text = await extractPdfText(fileBuffer);
+
+        if (!text || text.trim().length < 20) {
+            return res.status(400).json({ error: 'Could not extract meaningful text from the PDF. The file may be scanned/image-based.' });
+        }
+
+        const truncatedText = text.substring(0, 15000);
+
+        const extractionPrompt = `You are an expert medical data extraction AI specializing in parsing lab reports.
+
+TASK: Extract ALL medical test results (biomarkers) from the provided medical report text.
+
+INSTRUCTIONS:
+1. Find every test name, result value, and unit from the report
+2. Categorize each test appropriately
+3. Return valid JSON ONLY - no markdown, no extra text
+4. If date is in report, extract it; otherwise use today's date
+5. Report type is usually at the top (e.g., "TEST REPORT", "Lab Report", etc)
+
+CATEGORY MAPPING:
+- Metabolic: Glucose, HbA1c, Creatinine, Uric Acid, Cholesterol, Triglycerides, eGFR
+- Cardiovascular: HDL, LDL, Blood Pressure, Systolic, Diastolic
+- Hematology: Hemoglobin, Hematocrit, RBC, WBC, Platelets, HbA1c
+- Renal: Creatinine, BUN, eGFR, Urea
+- Other: TSH, T3, T4, Thyroid, any other tests
+
+EXPECTED JSON FORMAT:
+{
+    "date": "YYYY-MM-DD",
+    "type": "Lab Test Report",
+    "biomarkers": [
+        {"name": "Creatinine", "value": 0.9, "unit": "mg/dL", "category": "Renal"},
+        {"name": "Glucose", "value": 114, "unit": "mg/dL", "category": "Metabolic"},
+        {"name": "Total Cholesterol", "value": 172, "unit": "mg/dL", "category": "Cardiovascular"}
+    ]
+}
+
+MEDICAL REPORT TEXT:
+${truncatedText}`;
+
+        console.log("Sending extraction request to Groq...");
+
+        const completion = await groq.chat.completions.create({
+            messages: [
+                { role: "system", content: "You are an expert medical lab report parser. Extract and return ONLY valid JSON. Do not include markdown formatting." },
+                { role: "user", content: extractionPrompt }
+            ],
+            model: "llama-3.3-70b-versatile",
+            temperature: 0.1,
+            response_format: { type: "json_object" }
+        });
+
+        const responseText = completion.choices[0]?.message?.content || '{}';
+        console.log("Groq response:", responseText.substring(0, 200));
+
+        let parsed;
+        try {
+            parsed = JSON.parse(responseText);
+            console.log("Successfully parsed JSON. Biomarkers count:", parsed.biomarkers?.length);
+        } catch (e) {
+            console.log("Initial parse failed, attempting cleanup...");
+            const cleanJson = responseText.replace(/```json/g, '').replace(/```/g, '').replace(/\n/g, ' ').trim();
+            try {
+                parsed = JSON.parse(cleanJson);
+                console.log("Successfully parsed cleaned JSON");
+            } catch (e2) {
+                console.error("Final parse failed. Raw response:", responseText);
+                return res.status(500).json({ error: 'Failed to parse extraction result', raw: responseText.substring(0, 500) });
+            }
+        }
+
+        // Ensure biomarkers array exists and has items
+        if (!parsed.biomarkers || !Array.isArray(parsed.biomarkers) || parsed.biomarkers.length === 0) {
+            console.warn("No biomarkers extracted. Returning what we have:", parsed);
+            return res.json(parsed);
+        }
+
+        return res.json(parsed);
+
+    } catch (error) {
+        console.error('PDF Extraction Error:', error.message);
+        console.error('Full error:', error);
+        res.status(500).json({ error: 'Failed to extract data from PDF', details: error.message });
     }
 });
 
