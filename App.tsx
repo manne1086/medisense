@@ -85,7 +85,7 @@ function App() {
           </button>
           <div className="inline-flex items-center gap-2 bg-white/60 backdrop-blur px-4 py-2 rounded-full border border-white/60 shadow-sm mb-2">
              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-             <span className="text-xs font-semibold text-gray-600 tracking-wide uppercase">System Online • HIPAA Mode Active</span>
+             <span className="text-xs font-semibold text-gray-600 tracking-wide uppercase">System Online • Secure Mode</span>
           </div>
           <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight text-[#008AD1] drop-shadow-sm">
             MediSense AI
