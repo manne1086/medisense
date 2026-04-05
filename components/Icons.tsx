@@ -56,7 +56,8 @@ import {
   FileWarning,
   Microscope,
   Scan,
-  Trash2
+  Trash2,
+  Download
 } from 'lucide-react';
 
 export { 
@@ -116,5 +117,6 @@ export {
   FileWarning,
   Microscope,
   Scan,
-  Trash2
+  Trash2,
+  Download
 };

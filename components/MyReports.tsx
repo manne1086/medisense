@@ -6,6 +6,8 @@ import {
 } from './Icons';
 import { getHistory, deleteReport } from '../services/storageService';
 import { MedicalReport, RiskCondition, Biomarker, LifestyleIntervention } from '../types';
+import { BiomarkerTrends } from './BiomarkerTrends';
+import { DoctorSummary } from './DoctorSummary';
 
 // ─── Status helpers ─────────────────────────────────────────────────
 
@@ -371,7 +373,23 @@ export const MyReports: React.FC = () => {
 
   // List view
   return (
-    <div className="space-y-0">
+    <div className="space-y-6">
+      {/* Biomarker Trends Section */}
+      {reports.length >= 2 && (
+        <div className="glass-panel rounded-3xl border border-white/60 p-6 md:p-8">
+          <BiomarkerTrends reports={reports} />
+        </div>
+      )}
+
+      {/* Doctor Visit Summary Section */}
+      {reports.length >= 1 && (
+        <div className="glass-panel rounded-3xl border border-white/60 p-6 md:p-8">
+          <DoctorSummary reports={reports} />
+        </div>
+      )}
+
+      {/* Reports List */}
+      <div className="space-y-0">
       {/* Header */}
       <div className="glass-panel rounded-t-3xl border border-white/60 p-8 pb-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -474,6 +492,7 @@ export const MyReports: React.FC = () => {
             </div>
           )}
         </div>
+      </div>
       </div>
     </div>
   );

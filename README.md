@@ -82,11 +82,11 @@ medisense/
    npm install
    ```
 
-2. Create `.env.local` with your API keys:
+2. Create `.env.local` with your frontend config:
    ```env
-   VITE_GROQ_API_KEY=your_groq_api_key
    VITE_GROQ_TEXT_MODEL=llama-3.3-70b-versatile
    VITE_GROQ_VISION_MODEL=llama-3.2-11b-vision-preview
+   VITE_API_URL=http://localhost:5000
    VITE_GOOGLE_CLIENT_ID=your_google_client_id
    ```
 
@@ -162,9 +162,9 @@ The AI Doctor ingests all your past medical records (biomarkers, summaries, risk
 
 - 🔐 JWT-based authentication with Google OAuth
 - 🔒 All records scoped to authenticated user (MongoDB filtering)
-- 🛡️ No API keys exposed in frontend code
-- ⚠️ Medical Disclaimer: AI outputs are for guidance only, not diagnosis
-- 📋 HIPAA-compliant data storage (MongoDB with user isolation)
+- 🛡️ API keys kept server-side (never sent to the browser)
+- ⚠️ **Medical Disclaimer**: AI outputs are for informational guidance only — not a clinical diagnosis
+- 📋 Per-user data isolation in MongoDB (not independently audited for HIPAA compliance)
 
 ## Development
 

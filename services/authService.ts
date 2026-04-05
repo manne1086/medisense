@@ -1,5 +1,6 @@
 
-const AUTH_URL = 'http://localhost:5000/auth';
+const API_BASE = import.meta.env.VITE_API_URL?.replace(/\/+$/, '') || 'http://localhost:5000';
+const AUTH_URL = `${API_BASE}/auth`;
 
 export const loginWithGoogle = () => {
   window.location.href = `${AUTH_URL}/google`;

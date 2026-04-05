@@ -1,4 +1,3 @@
-import OpenAI from 'openai';
 import {
     TriageResult,
     SeverityLevel,
@@ -17,15 +16,34 @@ import {
     PatientOverallStatus
 } from '../types';
 
-const GROQ_API_KEY = import.meta.env.VITE_GROQ_API_KEY?.trim() || '';
-const openai = new OpenAI({
-    apiKey: GROQ_API_KEY || 'missing-groq-api-key',
-    baseURL: 'https://api.groq.com/openai/v1',
-    dangerouslyAllowBrowser: true
-});
+const API_BASE = import.meta.env.VITE_API_URL?.replace(/\/+$/, '') || 'http://localhost:5000';
 
 const GROK_MODEL_TEXT = import.meta.env.VITE_GROQ_TEXT_MODEL?.trim() || 'llama-3.3-70b-versatile';
-const GROK_MODEL_VISION = import.meta.env.VITE_GROQ_VISION_MODEL?.trim() || 'llama-3.2-11b-vision-preview';
+const GROK_MODEL_VISION = import.meta.env.VITE_GROQ_VISION_MODEL?.trim() || 'meta-llama/llama-4-scout-17b-16e-instruct';
+
+/**
+ * Calls the server-side Groq proxy instead of directly using the Groq API.
+ * This keeps the API key on the server.
+ */
+const groqChat = async (params: {
+    model: string;
+    messages: any[];
+    temperature?: number;
+    max_tokens?: number;
+    response_format?: { type: string };
+    stream?: boolean;
+}) => {
+    const res = await fetch(`${API_BASE}/api/groq/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Groq proxy returned ${res.status}`);
+    }
+    return res.json();
+};
 
 const parseJSON = (text: string) => {
     if (!text) return null;
@@ -51,9 +69,7 @@ const parseJSON = (text: string) => {
 };
 
 const ensureGroqConfigured = () => {
-    if (!GROQ_API_KEY) {
-        throw new Error('Groq API key missing. Set VITE_GROQ_API_KEY in your frontend environment.');
-    }
+    // API key is now on the server side; nothing to check here.
 };
 
 const normalizeStringList = (value: unknown, maxItems = 4): string[] => {
@@ -537,6 +553,88 @@ Output:
 }
 `;
 
+/**
+ * Detect language from input text by checking for script characters
+ * Supports: Hindi, Telugu, Tamil, Kannada, Bengali, Malayalam, Gujarati, Marathi
+ * Returns detected language code or 'en-IN' as fallback
+ */
+const detectLanguageFromText = (text: string): string => {
+  if (!text || text.trim().length === 0) return 'en-IN';
+
+  // Count script characters to handle mixed-language text
+  const counts: Record<string, number> = {
+    devanagari: 0,
+    telugu: 0,
+    tamil: 0,
+    kannada: 0,
+    bengali: 0,
+    malayalam: 0,
+    gujarati: 0,
+    odia: 0,
+  };
+
+  // Devanagari script (Hindi, Marathi, Sanskrit, Nepali) - U+0900 to U+097F
+  const devanagariRegex = /[\u0900-\u097F]/g;
+  const devanagariMatches = text.match(devanagariRegex) || [];
+  counts.devanagari = devanagariMatches.length;
+
+  // Telugu script - U+0C00 to U+0C7F
+  const teluguRegex = /[\u0C00-\u0C7F]/g;
+  const teluguMatches = text.match(teluguRegex) || [];
+  counts.telugu = teluguMatches.length;
+
+  // Tamil script - U+0B80 to U+0BFF
+  const tamilRegex = /[\u0B80-\u0BFF]/g;
+  const tamilMatches = text.match(tamilRegex) || [];
+  counts.tamil = tamilMatches.length;
+
+  // Kannada script - U+0C80 to U+0CFF
+  const kannadaRegex = /[\u0C80-\u0CFF]/g;
+  const kannadaMatches = text.match(kannadaRegex) || [];
+  counts.kannada = kannadaMatches.length;
+
+  // Bengali script - U+0980 to U+09FF
+  const bengaliRegex = /[\u0980-\u09FF]/g;
+  const bengaliMatches = text.match(bengaliRegex) || [];
+  counts.bengali = bengaliMatches.length;
+
+  // Malayalam script - U+0D00 to U+0D7F
+  const malayalamRegex = /[\u0D00-\u0D7F]/g;
+  const malayalamMatches = text.match(malayalamRegex) || [];
+  counts.malayalam = malayalamMatches.length;
+
+  // Gujarati script - U+0A80 to U+0AFF
+  const gujaratiRegex = /[\u0A80-\u0AFF]/g;
+  const gujaratiMatches = text.match(gujaratiRegex) || [];
+  counts.gujarati = gujaratiMatches.length;
+
+  // Odia script - U+0B00 to U+0B7F
+  const odiaRegex = /[\u0B00-\u0B7F]/g;
+  const odiaMatches = text.match(odiaRegex) || [];
+  counts.odia = odiaMatches.length;
+
+  // Find the script with the most characters
+  const maxCount = Math.max(...Object.values(counts));
+  
+  if (maxCount === 0) {
+    // No Indian scripts found, default to English
+    return 'en-IN';
+  }
+
+  // Map to language code based on highest count
+  if (counts.devanagari === maxCount) return 'hi-IN';
+  if (counts.telugu === maxCount) return 'te-IN';
+  if (counts.tamil === maxCount) return 'ta-IN';
+  if (counts.kannada === maxCount) return 'kn-IN';
+  if (counts.bengali === maxCount) return 'bn-IN';
+  if (counts.malayalam === maxCount) return 'ml-IN';
+  if (counts.gujarati === maxCount) return 'gu-IN';
+  if (counts.odia === maxCount) return 'or-IN';
+
+  // Default to English
+  return 'en-IN';
+};
+
 const normalizeLanguageCode = (languageCode?: unknown): string => {
     if (typeof languageCode !== 'string') return 'auto';
 
@@ -546,7 +644,44 @@ const normalizeLanguageCode = (languageCode?: unknown): string => {
     if (normalized.startsWith('hi')) return 'hi-IN';
     if (normalized.startsWith('te')) return 'te-IN';
     if (normalized.startsWith('ta')) return 'ta-IN';
+    if (normalized.startsWith('kn')) return 'kn-IN';
+    if (normalized.startsWith('bn') || normalized.startsWith('be')) return 'bn-IN';
+    if (normalized.startsWith('ml')) return 'ml-IN';
+    if (normalized.startsWith('gu')) return 'gu-IN';
+    if (normalized.startsWith('or')) return 'or-IN';
     return languageCode.trim();
+};
+
+const LANGUAGE_NAMES: Record<string, string> = {
+    'en-IN': 'English',
+    'hi-IN': 'Hindi',
+    'te-IN': 'Telugu',
+    'ta-IN': 'Tamil',
+    'kn-IN': 'Kannada',
+    'bn-IN': 'Bengali',
+    'ml-IN': 'Malayalam',
+    'gu-IN': 'Gujarati',
+    'or-IN': 'Odia',
+};
+
+const getChatLanguageInstruction = (languageCode?: string): string => {
+    const normalizedLanguageCode = normalizeLanguageCode(languageCode);
+
+    if (normalizedLanguageCode === 'auto') {
+        return `LANGUAGE BEHAVIOR:
+- Detect the user's language from their latest message and reply in that same language.
+- If the user writes in English, reply in English. If in Hindi, reply in Hindi. Match their language exactly.
+- If the user mixes languages, reply naturally in that mix.
+- The patient's medical records may be written in any language. Do not let that override the reply language — always match the USER's message language.
+- Keep the answer readable and avoid switching languages unless the user does first.`;
+    }
+
+    const langName = LANGUAGE_NAMES[normalizedLanguageCode] || normalizedLanguageCode;
+
+    return `LANGUAGE BEHAVIOR:
+- Reply ONLY in ${langName}.
+- Keep the entire response in ${langName} unless the user explicitly mixes languages.
+- The patient's medical records may be written in English or other languages. Use them for facts, but always keep the reply language as ${langName}.`;
 };
 
 const normalizeEmotion = (emotion?: unknown): TriageResult['emotion'] => {
@@ -658,18 +793,74 @@ const normalizeTriageResult = (raw: any, requestedLanguageCode: string): TriageR
     };
 };
 
+const IMAGE_ANALYSIS_SYSTEM_INSTRUCTION = `
+You are MediSense AI, a medical image analysis assistant. You specialize in analyzing images of skin conditions, wounds, rashes, and other visible medical symptoms.
+
+When the user uploads a medical image, you MUST:
+
+1. **Observation**: Describe exactly what you see — color, texture, pattern, distribution, size estimation, affected body area, and any distinctive features (e.g., raised, flat, scaly, blistered, oozing, dry).
+
+2. **Classification**: Identify the most likely condition(s). Provide your top 1-3 possible diagnoses ranked by likelihood. For each condition include:
+   - Disease/condition name
+   - Brief description of why the image matches this condition
+   - How common this condition is
+
+3. **Severity Assessment**: Rate the severity:
+   - Mild: Cosmetic concern or minor irritation, manageable at home
+   - Moderate: Needs medical attention but not urgent
+   - Severe: Needs prompt medical evaluation
+   - Emergency: Seek immediate medical care
+
+4. **Recommended Actions**:
+   - Immediate home care steps (if applicable)
+   - Which type of specialist to consult (dermatologist, general physician, etc.)
+   - Any red flags to watch for that would require urgent care
+
+5. **Important Disclaimers**: Always note that visual analysis alone cannot replace clinical examination, lab tests, or biopsy. Recommend professional consultation.
+
+RESPONSE FORMAT:
+Respond in clear, readable text (NOT JSON). Use this structure:
+
+🔍 **What I Observe:**
+[Describe the visible features]
+
+🏥 **Possible Condition(s):**
+1. **[Condition Name]** (Most Likely) — [explanation]
+2. **[Condition Name]** (Possible) — [explanation]
+
+⚠️ **Severity:** [Mild/Moderate/Severe/Emergency]
+
+💊 **Recommended Actions:**
+- [action 1]
+- [action 2]
+
+📋 **Follow-up Questions:**
+- [question about duration, itching, pain, spreading, etc.]
+
+⚕️ *Disclaimer: This is an AI-assisted preliminary analysis and not a medical diagnosis. Please consult a qualified healthcare professional for proper evaluation and treatment.*
+
+If the image is unclear or not medical in nature, politely ask for a clearer photo and describe what you need.
+`;
+
 export const analyzeSymptoms = async (symptoms: string, imageBase64?: string, mimeType?: string, languageCode: string = 'auto'): Promise<TriageResult> => {
     ensureGroqConfigured();
     const isMultimodal = !!(imageBase64 && mimeType);
     const model = isMultimodal ? GROK_MODEL_VISION : GROK_MODEL_TEXT;
-    const normalizedLanguageCode = normalizeLanguageCode(languageCode);
-    const languageInstruction = normalizedLanguageCode === 'auto'
-        ? 'Detect the user language from the symptom text and respond in that same language.'
-        : `Detected speech language code: ${normalizedLanguageCode}. Reply in this language and set "language_code" to "${normalizedLanguageCode}".`;
-    const analysisPrompt = `${languageInstruction}\nAnalyze these symptoms: ${symptoms}. Return strictly JSON.`;
+    
+    // Detect language from symptoms text if 'auto' is selected
+    const detectedLanguageCode = languageCode === 'auto' 
+      ? detectLanguageFromText(symptoms)
+      : normalizeLanguageCode(languageCode);
+    
+    const languageInstruction = detectedLanguageCode === 'en-IN'
+        ? 'The user is speaking in English. Reply in English and set "language_code" to "en-IN".'
+        : `Detected speech language code: ${detectedLanguageCode}. Reply in this language and set "language_code" to "${detectedLanguageCode}".`;
+    const analysisPrompt = isMultimodal
+        ? `Analyze this medical image carefully.${symptoms ? ` The user describes: "${symptoms}".` : ' The user has not provided any description.'} Identify the condition, classify the disease type, assess severity, and provide actionable recommendations.`
+        : `${languageInstruction}\nAnalyze these symptoms: ${symptoms}. Return strictly JSON.`;
 
     const messages: any[] = [
-        { role: 'system', content: TRIAGE_SYSTEM_INSTRUCTION }
+        { role: 'system', content: isMultimodal ? IMAGE_ANALYSIS_SYSTEM_INSTRUCTION : TRIAGE_SYSTEM_INSTRUCTION }
     ];
 
     if (isMultimodal) {
@@ -690,15 +881,30 @@ export const analyzeSymptoms = async (symptoms: string, imageBase64?: string, mi
     }
 
     try {
-        const completion = await openai.chat.completions.create({
+        const completion = await groqChat({
             model: model,
             messages: messages,
             temperature: 0.1,
+            max_tokens: isMultimodal ? 1024 : undefined,
             response_format: isMultimodal ? undefined : { type: "json_object" }
         });
 
         const content = completion.choices[0].message.content || '{}';
-        return normalizeTriageResult(parseJSON(content), normalizedLanguageCode);
+        const parsed = parseJSON(content);
+
+        // Vision models may return plain text instead of JSON
+        if (!parsed && isMultimodal) {
+            return {
+                text: content.trim(),
+                emotion: 'calm' as const,
+                language_code: detectedLanguageCode,
+                severity: 'Moderate' as SeverityLevel,
+                needsFollowUp: true,
+                followUpQuestions: [],
+            };
+        }
+
+        return normalizeTriageResult(parsed, detectedLanguageCode);
     } catch (error) {
         console.error("Grok Triage Error:", error);
         return normalizeTriageResult({}, normalizedLanguageCode);
@@ -708,7 +914,9 @@ export const analyzeSymptoms = async (symptoms: string, imageBase64?: string, mi
 export const chatWithAssistant = async (
     history: { role: 'user' | 'model', text: string }[],
     message: string,
-    medicalRecords?: any[]
+    medicalRecords?: any[],
+    languageCode: string = 'auto',
+    voiceConverse: boolean = false
 ) => {
     try {
         ensureGroqConfigured();
@@ -780,9 +988,24 @@ IMPORTANT RULES:
 - When the patient asks about their health, labs, medications, or risks, reference their actual data.
 - If a question relates to a specific biomarker or condition in their records, cite the relevant values and dates.
 - If the patient's records show concerning trends, proactively mention them when relevant.
-- Always clarify you are an AI and cannot replace a doctor's diagnosis.
-- Be concise, warm, and patient-friendly. Avoid excessive medical jargon.
-- If you don't have relevant data in their records, say so honestly and give general guidance.${ragContext}`;
+- NEVER say "I'm an AI, not a doctor" or "consult a qualified doctor" or similar disclaimers. Instead, end your response by asking if the user needs help with anything else, or suggest a relevant follow-up (e.g., "Would you like tips to lower your triglycerides?" or "Want me to explain what this means for your diet?").
+- If you don't have relevant data in their records, say so honestly and give general guidance.
+
+${voiceConverse
+  ? `RESPONSE STYLE (VOICE CONVERSATION MODE):
+- Keep responses SHORT and PRECISE — 2-4 sentences max.
+- Speak naturally as if having a real conversation. No bullet points, no numbered lists, no markdown formatting.
+- Get straight to the point. Do NOT elaborate unless the user asks for more detail.
+- Use simple everyday words. This response will be read aloud via text-to-speech.`
+  : `RESPONSE STYLE (TEXT MODE):
+- Give detailed, comprehensive responses with relevant context.
+- Use bullet points, numbered lists, and clear formatting for readability.
+- Include specific values, ranges, and actionable advice.
+- Be thorough — the user is reading this on screen and wants full information.`}
+
+${getChatLanguageInstruction(
+          languageCode === 'auto' ? detectLanguageFromText(message) : languageCode
+        )}${ragContext}`;
 
         const messages: any[] = [{ role: 'system', content: systemPrompt }];
         messages.push(...history.map(h => ({
@@ -791,10 +1014,9 @@ IMPORTANT RULES:
         })));
         messages.push({ role: 'user', content: message });
 
-        const completion = await openai.chat.completions.create({
+        const completion = await groqChat({
             model: GROK_MODEL_TEXT,
             messages: messages,
-            stream: false
         });
 
         return completion.choices[0].message.content || "I apologize, I couldn't process that.";
@@ -881,7 +1103,7 @@ export const processMedicalReport = async (
             const formData = new FormData();
             formData.append('file', blob, 'report.pdf');
 
-            const response = await fetch('http://localhost:5000/api/analyze/extract-pdf', {
+            const response = await fetch(`${API_BASE}/api/analyze/extract-pdf`, {
                 method: 'POST',
                 body: formData,
             });
@@ -899,7 +1121,7 @@ export const processMedicalReport = async (
     } else {
         // ── Image path: use Groq vision model directly ─────────────
         try {
-            const completion = await openai.chat.completions.create({
+            const completion = await groqChat({
                 model: GROK_MODEL_VISION,
                 messages: [
                     { role: 'system', content: EXTRACTION_SYSTEM_INSTRUCTION },
@@ -929,7 +1151,8 @@ export const processMedicalReport = async (
         id: `report-${Date.now()}`,
         date: extraction.date || new Date().toISOString(),
         type: extraction.type || "Uploaded Report",
-        biomarkers: normalizedBiomarkers
+        biomarkers: normalizedBiomarkers,
+        ...(extraction.prescriptions && extraction.prescriptions.length > 0 && { prescriptions: extraction.prescriptions })
     };
 
     onStageChange?.('reasoning');
@@ -939,7 +1162,7 @@ export const processMedicalReport = async (
         .slice(0, 3);
     let analysis: AIAnalysisResult;
     try {
-        const completion = await openai.chat.completions.create({
+        const completion = await groqChat({
             model: GROK_MODEL_TEXT,
             messages: [
                 { role: 'system', content: ANALYSIS_SYSTEM_INSTRUCTION },
@@ -973,7 +1196,7 @@ export const analyzePrescription = async (base64Image: string, mimeType: string)
         formData.append('file', blob, 'prescription.jpg');
         formData.append('task', 'prescription');
 
-        const response = await fetch('http://localhost:5000/api/analyze', {
+        const response = await fetch(`${API_BASE}/api/analyze`, {
             method: 'POST',
             body: formData
         });

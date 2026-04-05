@@ -3,46 +3,16 @@ const router = express.Router();
 const multer = require('multer');
 const Groq = require('groq-sdk');
 
-// ── Polyfills for Node.js environment ──
-if (typeof global.DOMMatrix === 'undefined') {
-    global.DOMMatrix = class DOMMatrix {
-        constructor(init = 'none') {
-            this.a = 1;
-            this.b = 0;
-            this.c = 0;
-            this.d = 1;
-            this.e = 0;
-            this.f = 0;
-        }
-    };
-}
+// ── Custom PDF text extraction using pdf-parse ──
+const { PDFParse } = require('pdf-parse');
 
-// ── Custom PDF text extraction using pdfjs ──
 const extractPdfText = async (buffer) => {
-    const pdfjsLib = require('pdfjs-dist');
-    
     try {
         console.log("Starting PDF extraction, buffer size:", buffer.length);
-        // Convert Buffer to Uint8Array for pdfjs-dist
-        const uint8Array = new Uint8Array(buffer);
-        const pdf = await pdfjsLib.getDocument({ data: uint8Array }).promise;
-        console.log("PDF loaded, number of pages:", pdf.numPages);
-        let fullText = '';
-        
-        for (let i = 1; i <= pdf.numPages; i++) {
-            try {
-                const page = await pdf.getPage(i);
-                const textContent = await page.getTextContent();
-                const pageText = textContent.items.map(item => item.str).join(' ');
-                console.log(`Page ${i}: extracted ${pageText.length} characters`);
-                fullText += pageText + '\n';
-            } catch (e) {
-                console.warn(`Could not extract text from page ${i}:`, e.message);
-            }
-        }
-        
-        console.log("Total extracted:", fullText.length, "characters");
-        return fullText;
+        const parser = new PDFParse({ data: buffer });
+        const result = await parser.getText();
+        console.log("Total extracted:", result.text.length, "characters");
+        return result.text;
     } catch (e) {
         console.error('PDF extraction error:', e);
         throw new Error(`Failed to extract text from PDF: ${e.message}`);
@@ -50,7 +20,7 @@ const extractPdfText = async (buffer) => {
 };
 
 // Test the function once at startup
-console.log("PDF extraction module loaded with pdfjs-dist backend");
+console.log("PDF extraction module loaded (pdf-parse)");
 
 // Configure Multer for memory storage
 const storage = multer.memoryStorage();
@@ -120,8 +90,10 @@ router.post('/', uploadMiddleware, async (req, res) => {
                         
                         YOUR TASKS:
                         1. Identify all prescribed medications (name, dosage, frequency).
-                        2. For each medication, suggest 2-3 common market alternatives (generics/brands).
-                        3. Suggest 2-3 lifestyle interventions relevant to the condition being treated.
+                        1. Identify all prescribed medications (name, dosage, frequency).
+                        2. For each medication, provide a helpful 2-3 sentence description explaining: what the drug is, what condition it treats, how it works in simple terms, and any common side effects to watch for.
+                        3. For each medication, suggest 2-3 common market alternatives (generics/brands) with brief descriptions.
+                        4. Suggest 2-3 lifestyle interventions relevant to the condition being treated.
 
                         RETURN ONLY VALID JSON matching this structure:
                         {
@@ -131,9 +103,9 @@ router.post('/', uploadMiddleware, async (req, res) => {
                               "dosage": "500mg", 
                               "frequency": "Twice daily", 
                               "type": "Tablet", 
-                              "description": "Brief description", 
+                              "description": "2-3 sentence description: what it is, what it treats, how it works, key side effects.", 
                               "alternatives": [
-                                { "name": "Alternative Name", "type": "Generic", "description": "Cost-effective option" }
+                                { "name": "Alternative Name", "type": "Generic", "description": "Brief description of the alternative" }
                               ] 
                             }
                           ],
@@ -152,7 +124,7 @@ router.post('/', uploadMiddleware, async (req, res) => {
                                 ]
                             }
                         ],
-                        model: "llama-3.2-11b-vision-preview",
+                        model: "meta-llama/llama-4-scout-17b-16e-instruct",
                         temperature: 0.1,
                         response_format: { type: "json_object" }
                     });
@@ -184,7 +156,7 @@ router.post('/', uploadMiddleware, async (req, res) => {
                                 ]
                             }
                         ],
-                        model: "llama-3.2-11b-vision-preview"
+                        model: "meta-llama/llama-4-scout-17b-16e-instruct"
                     });
 
                     return res.json({ type: 'image_caption', data: [{ generated_text: completion.choices[0]?.message?.content }] });
@@ -259,32 +231,38 @@ router.post('/extract-pdf', uploadMiddleware, async (req, res) => {
 
         const truncatedText = text.substring(0, 15000);
 
-        const extractionPrompt = `You are an expert medical data extraction AI specializing in parsing lab reports.
+        const extractionPrompt = `You are an expert medical data extraction AI specializing in parsing lab reports and medical documents.
 
-TASK: Extract ALL medical test results (biomarkers) from the provided medical report text.
+TASK: Extract medical test results (biomarkers) AND any prescribed medications from the provided medical report text.
 
-INSTRUCTIONS:
+INSTRUCTIONS FOR BIOMARKERS:
 1. Find every test name, result value, and unit from the report
 2. Categorize each test appropriately
-3. Return valid JSON ONLY - no markdown, no extra text
-4. If date is in report, extract it; otherwise use today's date
-5. Report type is usually at the top (e.g., "TEST REPORT", "Lab Report", etc)
+3. If date is in report, extract it; otherwise use today's date
+4. Report type is usually at the top (e.g., "TEST REPORT", "Lab Report", etc)
 
-CATEGORY MAPPING:
+INSTRUCTIONS FOR PRESCRIPTIONS:
+1. Look for a "Prescriptions", "Medications", "Rx", or "Treatment" section
+2. Extract medication name, dosage, and frequency
+3. If no prescriptions found, return empty array
+
+CATEGORY MAPPING FOR BIOMARKERS:
 - Metabolic: Glucose, HbA1c, Creatinine, Uric Acid, Cholesterol, Triglycerides, eGFR
 - Cardiovascular: HDL, LDL, Blood Pressure, Systolic, Diastolic
 - Hematology: Hemoglobin, Hematocrit, RBC, WBC, Platelets, HbA1c
 - Renal: Creatinine, BUN, eGFR, Urea
 - Other: TSH, T3, T4, Thyroid, any other tests
 
-EXPECTED JSON FORMAT:
+RETURN VALID JSON ONLY - NO MARKDOWN:
 {
     "date": "YYYY-MM-DD",
     "type": "Lab Test Report",
     "biomarkers": [
         {"name": "Creatinine", "value": 0.9, "unit": "mg/dL", "category": "Renal"},
-        {"name": "Glucose", "value": 114, "unit": "mg/dL", "category": "Metabolic"},
-        {"name": "Total Cholesterol", "value": 172, "unit": "mg/dL", "category": "Cardiovascular"}
+        {"name": "Glucose", "value": 114, "unit": "mg/dL", "category": "Metabolic"}
+    ],
+    "prescriptions": [
+        {"name": "Medication Name", "dosage": "500mg", "frequency": "Twice daily", "type": "Tablet", "description": "Brief description"}
     ]
 }
 
