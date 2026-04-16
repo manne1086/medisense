@@ -3,6 +3,10 @@
 
 A patient-first AI medical assistant using Retrieval-Augmented Generation (RAG) to provide accurate, personalized health insights from uploaded medical reports and past records.
 
+- **Architected** a full-stack **RAG-powered** AI medical assistant across **6 modules** (chat, report analysis, prescriptions, triage, biomarker trends, record management) using **LLaMA 3.3-70B** and **React + TypeScript**.
+- **Engineered** a **multi-modal AI pipeline** combining **OCR + Vision AI** to extract, analyze, and longitudinally trend **biomarkers** from lab reports and prescriptions with real-time clinical insights.
+- **Secured** multi-user health data with **Google OAuth 2.0 + JWT** authentication and **per-user MongoDB** record isolation, ensuring zero cross-user data exposure across all API endpoints.
+
 ## Features
 
 ✅ **AI Doctor (RAG-Powered)** — Chat interface that leverages your medical history to answer health questions with precision
