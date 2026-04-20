@@ -2,25 +2,45 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const Groq = require('groq-sdk');
+const auth = require('../middleware/auth');
 
-// ── Custom PDF text extraction using pdf-parse ──
-const { PDFParse } = require('pdf-parse');
+// ── Document parsing via Landing AI ADE ──
+const LANDING_AI_API_KEY = process.env.LANDING_AI_API_KEY;
+const LANDING_AI_PARSE_URL = 'https://api.va.landing.ai/v1/ade/parse';
 
-const extractPdfText = async (buffer) => {
-    try {
-        console.log("Starting PDF extraction, buffer size:", buffer.length);
-        const parser = new PDFParse({ data: buffer });
-        const result = await parser.getText();
-        console.log("Total extracted:", result.text.length, "characters");
-        return result.text;
-    } catch (e) {
-        console.error('PDF extraction error:', e);
-        throw new Error(`Failed to extract text from PDF: ${e.message}`);
+const parseDocumentWithLandingAI = async (buffer, mimeType = 'application/pdf', filename = 'document.pdf') => {
+    if (!LANDING_AI_API_KEY) {
+        throw new Error('LANDING_AI_API_KEY is not configured in server .env');
     }
+
+    console.log(`Landing AI: parsing ${filename} (${mimeType}, ${buffer.length} bytes)`);
+
+    const blob = new Blob([buffer], { type: mimeType });
+    const formData = new FormData();
+    formData.append('document', blob, filename);
+    formData.append('model', 'dpt-2-latest');
+
+    const response = await fetch(LANDING_AI_PARSE_URL, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${LANDING_AI_API_KEY}`,
+        },
+        body: formData,
+    });
+
+    if (!response.ok) {
+        const errBody = await response.text().catch(() => '');
+        console.error('Landing AI error:', response.status, errBody);
+        throw new Error(`Landing AI returned ${response.status}: ${errBody.substring(0, 200)}`);
+    }
+
+    const data = await response.json();
+    const markdown = data.markdown || '';
+    console.log(`Landing AI: extracted ${markdown.length} chars of markdown`);
+    return markdown;
 };
 
-// Test the function once at startup
-console.log("PDF extraction module loaded (pdf-parse)");
+console.log("Document parsing module loaded (Landing AI ADE)");
 
 // Configure Multer for memory storage
 const storage = multer.memoryStorage();
@@ -48,6 +68,13 @@ router.post('/', uploadMiddleware, async (req, res) => {
     console.log("Inside Analyze Handler. Body keys:", Object.keys(req.body));
     console.log("File:", req.file ? "Yes" : "No");
 
+    // Check for authentication token even though this route may be used without auth
+    // But extract-pdf requires auth, so we log it
+    const authHeader = req.header('Authorization');
+    if (authHeader) {
+        console.log("[analyze POST] Auth header present");
+    }
+
     if (!req.file && !req.body.text) {
         return res.status(400).json({ error: 'No file uploaded and no text provided' });
     }
@@ -65,12 +92,12 @@ router.post('/', uploadMiddleware, async (req, res) => {
             const fileBuffer = req.file.buffer;
 
             if (mimeType === 'application/pdf') {
-                const text = await extractPdfText(fileBuffer);
-                const truncatedText = text.substring(0, 15000); // Reasonable limit
+                const markdown = await parseDocumentWithLandingAI(fileBuffer, mimeType, req.file.originalname || 'report.pdf');
+                const truncatedText = markdown.substring(0, 15000);
 
                 const completion = await groq.chat.completions.create({
                     messages: [
-                        { role: "system", content: "Summarize the following PDF document." },
+                        { role: "system", content: "Summarize the following medical document." },
                         { role: "user", content: truncatedText }
                     ],
                     model: "llama-3.3-70b-versatile",
@@ -208,72 +235,90 @@ router.post('/', uploadMiddleware, async (req, res) => {
     }
 });
 
-// ── PDF Medical Report Extraction Route ─────────────────────────────
-router.post('/extract-pdf', uploadMiddleware, async (req, res) => {
-    console.log("PDF extraction route hit");
+// ── Medical Report Extraction Route (PDF + Image via Landing AI) ────
+router.post('/extract-pdf', auth, uploadMiddleware, async (req, res) => {
+    console.log("[extract-pdf] Route hit by user:", req.user._id);
+    console.log("[extract-pdf] File received:", req.file ? `${req.file.originalname} (${req.file.size} bytes)` : 'No file');
 
     if (!req.file) {
+        console.log("[extract-pdf] ERROR: No file uploaded");
         return res.status(400).json({ error: 'No file uploaded' });
     }
 
     const mimeType = req.file.mimetype;
-    if (mimeType !== 'application/pdf') {
-        return res.status(400).json({ error: 'Only PDF files are supported on this endpoint' });
+    const supportedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/tiff'];
+    if (!supportedTypes.includes(mimeType)) {
+        console.log("[extract-pdf] ERROR: Unsupported mime type:", mimeType);
+        return res.status(400).json({ error: `Unsupported file type: ${mimeType}. Supported: PDF, JPEG, PNG, WebP, TIFF` });
     }
 
     try {
         const fileBuffer = req.file.buffer;
-        const text = await extractPdfText(fileBuffer);
+        const filename = req.file.originalname || (mimeType === 'application/pdf' ? 'report.pdf' : 'report.jpg');
+        console.log("[extract-pdf] Processing:", filename, "Type:", mimeType);
 
-        if (!text || text.trim().length < 20) {
-            return res.status(400).json({ error: 'Could not extract meaningful text from the PDF. The file may be scanned/image-based.' });
+        // Step 1: Parse document with Landing AI for high-quality text extraction
+        const markdown = await parseDocumentWithLandingAI(fileBuffer, mimeType, filename);
+
+        if (!markdown || markdown.trim().length < 10) {
+            return res.status(400).json({ error: 'Could not extract meaningful content from the document. The file may be blank or unreadable.' });
         }
 
-        const truncatedText = text.substring(0, 15000);
+        const truncatedText = markdown.substring(0, 15000);
 
-        const extractionPrompt = `You are an expert medical data extraction AI specializing in parsing lab reports and medical documents.
+        // Step 2: Send extracted text to Groq for structured medical data extraction
+        const extractionPrompt = `You are an expert medical data extraction AI. Analyze the following medical document text and extract ALL relevant medical information.
 
-TASK: Extract medical test results (biomarkers) AND any prescribed medications from the provided medical report text.
+IMPORTANT: This could be ANY type of medical document — lab report, discharge summary, prescription, imaging report, doctor's notes, health checkup, etc. Extract whatever medical data is present.
 
-INSTRUCTIONS FOR BIOMARKERS:
-1. Find every test name, result value, and unit from the report
-2. Categorize each test appropriately
-3. If date is in report, extract it; otherwise use today's date
-4. Report type is usually at the top (e.g., "TEST REPORT", "Lab Report", etc)
-
-INSTRUCTIONS FOR PRESCRIPTIONS:
-1. Look for a "Prescriptions", "Medications", "Rx", or "Treatment" section
-2. Extract medication name, dosage, and frequency
-3. If no prescriptions found, return empty array
+INSTRUCTIONS:
+1. Identify the document type (e.g., "Lab Report", "Discharge Summary", "Prescription", "Imaging Report", "Health Checkup", etc.)
+2. Extract the date from the document if present
+3. For lab reports / health checkups: extract ALL test results as biomarkers with numeric values
+4. For discharge summaries / doctor's notes: extract key clinical findings as biomarkers where possible (e.g., vitals like BP, heart rate, temperature, SpO2), and capture the rest as a summary
+5. For ANY document: extract medications/prescriptions if mentioned
+6. Extract diagnosis, clinical findings, and key observations as "findings"
 
 CATEGORY MAPPING FOR BIOMARKERS:
-- Metabolic: Glucose, HbA1c, Creatinine, Uric Acid, Cholesterol, Triglycerides, eGFR
-- Cardiovascular: HDL, LDL, Blood Pressure, Systolic, Diastolic
-- Hematology: Hemoglobin, Hematocrit, RBC, WBC, Platelets, HbA1c
-- Renal: Creatinine, BUN, eGFR, Urea
-- Other: TSH, T3, T4, Thyroid, any other tests
+- Metabolic: Glucose, HbA1c, Uric Acid, Cholesterol, Triglycerides, Bilirubin, Albumin, Protein, SGOT, SGPT, ALT, AST, ALP
+- Cardiovascular: HDL, LDL, VLDL, Blood Pressure, Systolic, Diastolic, Heart Rate, Pulse
+- Hematology: Hemoglobin, Hematocrit, RBC, WBC, Platelets, MCV, MCH, MCHC, ESR, PCV, Neutrophils, Lymphocytes, Eosinophils, Basophils, Monocytes
+- Renal: Creatinine, BUN, eGFR, Urea, Uric Acid
+- Other: TSH, T3, T4, Vitamin D, Vitamin B12, Iron, Ferritin, Calcium, Sodium, Potassium, Chloride, SpO2, Temperature, BMI, or any other test
 
-RETURN VALID JSON ONLY - NO MARKDOWN:
+RETURN VALID JSON ONLY:
 {
-    "date": "YYYY-MM-DD",
-    "type": "Lab Test Report",
+    "date": "YYYY-MM-DD or best guess from document",
+    "type": "Document type (Lab Report, Discharge Summary, Prescription, etc.)",
+    "summary": "2-4 sentence plain-language summary of the document's key findings",
     "biomarkers": [
-        {"name": "Creatinine", "value": 0.9, "unit": "mg/dL", "category": "Renal"},
-        {"name": "Glucose", "value": 114, "unit": "mg/dL", "category": "Metabolic"}
+        {"name": "Test Name", "value": 123.4, "unit": "unit", "category": "Category"}
+    ],
+    "findings": [
+        "Key clinical finding or diagnosis 1",
+        "Key clinical finding or diagnosis 2"
     ],
     "prescriptions": [
         {"name": "Medication Name", "dosage": "500mg", "frequency": "Twice daily", "type": "Tablet", "description": "Brief description"}
     ]
 }
 
-MEDICAL REPORT TEXT:
+RULES:
+- Extract EVERY numeric test result you can find as a biomarker
+- If no numeric biomarkers exist (e.g., discharge summary), the biomarkers array can be empty — that is OK
+- Always try to populate "findings" with key medical observations from the document
+- Always try to populate "summary" with a brief overview
+- For dates, prefer the report/test date, not the patient's birth date
+- Do NOT invent or hallucinate values. Only extract what is explicitly in the text.
+
+MEDICAL DOCUMENT TEXT:
 ${truncatedText}`;
 
         console.log("Sending extraction request to Groq...");
 
         const completion = await groq.chat.completions.create({
             messages: [
-                { role: "system", content: "You are an expert medical lab report parser. Extract and return ONLY valid JSON. Do not include markdown formatting." },
+                { role: "system", content: "You are an expert medical document parser. Extract and return ONLY valid JSON. Do not include markdown formatting. Extract ALL available medical data from the document." },
                 { role: "user", content: extractionPrompt }
             ],
             model: "llama-3.3-70b-versatile",
@@ -287,31 +332,29 @@ ${truncatedText}`;
         let parsed;
         try {
             parsed = JSON.parse(responseText);
-            console.log("Successfully parsed JSON. Biomarkers count:", parsed.biomarkers?.length);
+            console.log("Successfully parsed JSON. Biomarkers:", parsed.biomarkers?.length, "Findings:", parsed.findings?.length);
         } catch (e) {
             console.log("Initial parse failed, attempting cleanup...");
             const cleanJson = responseText.replace(/```json/g, '').replace(/```/g, '').replace(/\n/g, ' ').trim();
             try {
                 parsed = JSON.parse(cleanJson);
-                console.log("Successfully parsed cleaned JSON");
             } catch (e2) {
                 console.error("Final parse failed. Raw response:", responseText);
                 return res.status(500).json({ error: 'Failed to parse extraction result', raw: responseText.substring(0, 500) });
             }
         }
 
-        // Ensure biomarkers array exists and has items
-        if (!parsed.biomarkers || !Array.isArray(parsed.biomarkers) || parsed.biomarkers.length === 0) {
-            console.warn("No biomarkers extracted. Returning what we have:", parsed);
-            return res.json(parsed);
-        }
+        // Ensure arrays exist
+        if (!parsed.biomarkers) parsed.biomarkers = [];
+        if (!parsed.findings) parsed.findings = [];
+        if (!parsed.prescriptions) parsed.prescriptions = [];
 
         return res.json(parsed);
 
     } catch (error) {
-        console.error('PDF Extraction Error:', error.message);
+        console.error('Document Extraction Error:', error.message);
         console.error('Full error:', error);
-        res.status(500).json({ error: 'Failed to extract data from PDF', details: error.message });
+        res.status(500).json({ error: 'Failed to extract data from document', details: error.message });
     }
 });
 

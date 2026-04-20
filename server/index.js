@@ -8,6 +8,7 @@ const jwt = require('jsonwebtoken');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const User = require('./models/User');
 const MedicalRecord = require('./models/MedicalRecord');
+const auth = require('./middleware/auth');
 const analyzeRoutes = require('./routes/analyze');
 const groqRoutes = require('./routes/groqProxy');
 const ttsRoutes = require('./routes/tts');
@@ -16,11 +17,21 @@ const app = express();
 
 // Middleware
 app.use(express.json({ limit: '20mb' }));
-app.use(cors());
+// Enhanced CORS configuration for better compatibility
+app.use(cors({
+  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(passport.initialize());
 
-// Routes
-app.use('/api/analyze', analyzeRoutes);
+// Routes - pass auth middleware to analyze routes
+app.use('/api/analyze', (req, res, next) => {
+  // Make auth available to analyze routes
+  req.auth = auth;
+  next();
+}, analyzeRoutes);
 app.use('/api/groq', groqRoutes);
 app.use('/api/tts', ttsRoutes);
 
@@ -32,14 +43,20 @@ mongoose.connection.on('connected', () => console.log('Mongoose connected to DB 
 mongoose.connection.on('error', (err) => console.error('Mongoose connection error:', err));
 mongoose.connection.on('disconnected', () => console.log('Mongoose disconnected'));
 
-mongoose.connect(process.env.MONGO_URI)
+// Start server immediately without waiting for MongoDB
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+// Connect to MongoDB in the background
+mongoose.connect(process.env.MONGO_URI, {
+  serverSelectionTimeoutMS: 5000, // 5-second timeout
+  socketTimeoutMS: 45000, // Close sockets after 45 seconds of inactivity
+})
   .then(() => {
     console.log('MongoDB Connected');
-    app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
   })
   .catch(err => {
     console.error('MongoDB Connection Error:', err);
-    process.exit(1);
+    console.warn('⚠️  Server running without MongoDB - database operations will fail');
   });
 
 // Passport Google Strategy
@@ -84,8 +101,9 @@ app.get('/auth/google/callback',
   (req, res) => {
     console.log("Auth Callback Reached");
     try {
-      const token = jwt.sign({ id: req.user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
-      console.log("Token generated, redirecting...");
+      // Generate token with 30-day expiration for better UX
+      const token = jwt.sign({ id: req.user._id }, process.env.JWT_SECRET, { expiresIn: '30d' });
+      console.log("Token generated (30-day expiration), redirecting...");
       res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}/auth-success?token=${token}`);
     } catch (error) {
       console.error("Callback Error:", error);
@@ -94,46 +112,68 @@ app.get('/auth/google/callback',
   }
 );
 
-// Middleware to verify JWT
-const auth = async (req, res, next) => {
-  try {
-    const token = req.header('Authorization').replace('Bearer ', '');
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.id);
-    if (!user) throw new Error();
-    req.user = user;
-    next();
-  } catch (e) {
-    res.status(401).send({ error: 'Please authenticate.' });
-  }
-};
-
 // Medical Records Routes
+
+// Health check endpoint - verify auth is working
+app.get('/api/health', auth, async (req, res) => {
+  try {
+    console.log('[GET /api/health] User authenticated:', req.user._id, 'Email:', req.user.email);
+    res.send({ 
+      status: 'ok', 
+      user: { id: req.user._id, email: req.user.email },
+      mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+    });
+  } catch (e) {
+    console.error('[GET /api/health] Error:', e);
+    res.status(500).send({ error: 'Health check failed' });
+  }
+});
+
+// Save a medical record
 app.post('/api/records', auth, async (req, res) => {
   try {
+    console.log('[POST /api/records] User:', req.user._id);
+    console.log('[POST /api/records] Report type:', req.body.type);
     const record = new MedicalRecord({
       ...req.body,
       user: req.user._id
     });
     await record.save();
+    console.log('[POST /api/records] Saved record ID:', record._id);
     res.status(201).send(record);
   } catch (e) {
+    console.error('[POST /api/records] Error:', e);
     res.status(400).send(e);
   }
 });
 
 app.get('/api/records', auth, async (req, res) => {
   try {
+    console.log('[GET /api/records] Fetching for user:', req.user._id);
     const records = await MedicalRecord.find({ user: req.user._id }).sort({ date: -1 });
+    console.log('[GET /api/records] Found', records.length, 'records');
     res.send(records);
   } catch (e) {
+    console.error('[GET /api/records] Error:', e);
     res.status(500).send(e);
   }
 });
 
 app.delete('/api/records/:id', auth, async (req, res) => {
   try {
-    const result = await MedicalRecord.deleteOne({ _id: req.params.id, user: req.user._id });
+    const mongoose = require('mongoose');
+    const recordId = req.params.id;
+    
+    // Try to convert to ObjectId, but fallback to string matching
+    let query = { user: req.user._id };
+    try {
+      query._id = mongoose.Types.ObjectId(recordId);
+    } catch (e) {
+      // If not a valid ObjectId, try matching as string
+      query._id = recordId;
+    }
+    
+    const result = await MedicalRecord.deleteOne(query);
     if (result.deletedCount === 0) {
       return res.status(404).send({ error: 'Report not found' });
     }

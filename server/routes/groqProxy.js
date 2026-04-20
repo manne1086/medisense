@@ -19,6 +19,24 @@ const normalizeTranscriptionLanguage = (language) => {
   return normalized;
 };
 
+const normalizeDetectedLanguageCode = (language) => {
+  if (typeof language !== 'string') return undefined;
+
+  const normalized = language.trim().toLowerCase();
+  if (!normalized || normalized === 'auto') return undefined;
+  if (normalized.startsWith('en') || normalized === 'english') return 'en-IN';
+  if (normalized.startsWith('hi') || normalized === 'hindi') return 'hi-IN';
+  if (normalized.startsWith('te') || normalized === 'telugu') return 'te-IN';
+  if (normalized.startsWith('ta') || normalized === 'tamil') return 'ta-IN';
+  if (normalized.startsWith('kn') || normalized === 'kannada') return 'kn-IN';
+  if (normalized.startsWith('bn') || normalized.startsWith('be') || normalized === 'bengali') return 'bn-IN';
+  if (normalized.startsWith('ml') || normalized === 'malayalam') return 'ml-IN';
+  if (normalized.startsWith('gu') || normalized === 'gujarati') return 'gu-IN';
+  if (normalized.startsWith('or') || normalized === 'odia' || normalized === 'oriya') return 'or-IN';
+
+  return undefined;
+};
+
 // Generic proxy for Groq chat completions
 router.post('/chat', async (req, res) => {
   try {
@@ -70,9 +88,26 @@ router.post('/transcribe', upload.single('audio'), async (req, res) => {
     if (lang) params.language = lang;
     if (lang && langPrompts[lang]) params.prompt = langPrompts[lang];
 
-    const transcription = await groq.audio.transcriptions.create(params);
+    let transcription;
+    try {
+      transcription = await groq.audio.transcriptions.create({
+        ...params,
+        response_format: 'verbose_json',
+      });
+    } catch (verboseErr) {
+      console.warn('Verbose transcription unavailable, retrying standard transcription:', verboseErr?.message || verboseErr);
+      transcription = await groq.audio.transcriptions.create(params);
+    }
 
-    res.json({ text: transcription.text || '' });
+    const languageCode = normalizeDetectedLanguageCode(transcription.language)
+      || normalizeDetectedLanguageCode(lang)
+      || undefined;
+
+    res.json({
+      text: transcription.text || '',
+      language: transcription.language || lang || undefined,
+      language_code: languageCode,
+    });
   } catch (err) {
     console.error('Transcription proxy error:', err?.message || err);
     res.status(500).json({ error: err?.message || 'Transcription failed' });

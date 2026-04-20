@@ -13,8 +13,17 @@ import {
     AnalysisCategoryBreakdown,
     AnalysisOverview,
     InsightConfidence,
-    PatientOverallStatus
+    PatientOverallStatus,
+    UnusualFinding,
+    BorderlineFinding,
+    SyndromeScore,
+    LipidRiskProfile,
+    ActionTimeline,
+    ConfidenceScoring,
+    ClinicalSummaryItem,
+    FindingUrgency
 } from '../types';
+import { getAuthToken, handleAuthFailure } from './authService';
 
 const API_BASE = import.meta.env.VITE_API_URL?.replace(/\/+$/, '') || 'http://localhost:5000';
 
@@ -426,6 +435,138 @@ const sanitizeAnalysisResult = (
         confidence: normalizeConfidence(rawAnalysis?.overview?.confidence || fallbackOverview.confidence)
     };
 
+    // --- Layer 1: Unusual Findings ---
+    const unusualFindings: UnusualFinding[] = Array.isArray(rawAnalysis?.unusualFindings)
+        ? rawAnalysis.unusualFindings
+            .map((item: any) => {
+                if (!item || typeof item !== 'object') return null;
+                const testName = typeof item.testName === 'string' ? item.testName.trim() : '';
+                if (!testName) return null;
+                const validUrgencies = ['IMMEDIATE', 'URGENT', 'ROUTINE', 'INVESTIGATE'];
+                return {
+                    testName,
+                    result: Number(item.result) || 0,
+                    unit: typeof item.unit === 'string' ? item.unit.trim() : '',
+                    referenceRange: typeof item.referenceRange === 'string' ? item.referenceRange.trim() : '',
+                    deviation: typeof item.deviation === 'string' ? item.deviation.trim() : '',
+                    expectedCauses: normalizeStringList(item.expectedCauses),
+                    clinicalSignificance: typeof item.clinicalSignificance === 'string' ? item.clinicalSignificance.trim() : '',
+                    nextSteps: normalizeStringList(item.nextSteps),
+                    urgency: (validUrgencies.includes(item.urgency) ? item.urgency : 'INVESTIGATE') as FindingUrgency
+                };
+            })
+            .filter(Boolean) as UnusualFinding[]
+        : [];
+
+    // --- Layer 2: Borderline Findings ---
+    const borderlineFindings: BorderlineFinding[] = Array.isArray(rawAnalysis?.borderlineFindings)
+        ? rawAnalysis.borderlineFindings
+            .map((item: any) => {
+                if (!item || typeof item !== 'object') return null;
+                const testName = typeof item.testName === 'string' ? item.testName.trim() : '';
+                if (!testName) return null;
+                return {
+                    testName,
+                    result: Number(item.result) || 0,
+                    unit: typeof item.unit === 'string' ? item.unit.trim() : '',
+                    referenceRange: typeof item.referenceRange === 'string' ? item.referenceRange.trim() : '',
+                    boundaryType: item.boundaryType === 'LOWER' ? 'LOWER' : 'UPPER' as 'UPPER' | 'LOWER',
+                    distanceToAbnormal: typeof item.distanceToAbnormal === 'string' ? item.distanceToAbnormal.trim() : '',
+                    interpretation: typeof item.interpretation === 'string' ? item.interpretation.trim() : '',
+                    prediction: typeof item.prediction === 'string' ? item.prediction.trim() : '',
+                    monitoringFrequency: typeof item.monitoringFrequency === 'string' ? item.monitoringFrequency.trim() : '',
+                    actionableThreshold: typeof item.actionableThreshold === 'string' ? item.actionableThreshold.trim() : '',
+                    ...(typeof item.patientCounseling === 'string' && item.patientCounseling.trim() ? { patientCounseling: item.patientCounseling.trim() } : {})
+                };
+            })
+            .filter(Boolean) as BorderlineFinding[]
+        : [];
+
+    // --- Layer 3: Syndrome Scores ---
+    const syndromeScores: SyndromeScore[] = Array.isArray(rawAnalysis?.syndromeScores)
+        ? rawAnalysis.syndromeScores
+            .map((item: any) => {
+                if (!item || typeof item !== 'object') return null;
+                const syndromeName = typeof item.syndromeName === 'string' ? item.syndromeName.trim() : '';
+                if (!syndromeName) return null;
+                const criteriaDetails = Array.isArray(item.criteriaDetails)
+                    ? item.criteriaDetails
+                        .filter((d: any) => d && typeof d === 'object' && typeof d.criterion === 'string')
+                        .map((d: any) => ({
+                            criterion: d.criterion.trim(),
+                            status: ['MET', 'NOT_MET', 'MISSING'].includes(d.status) ? d.status : 'MISSING',
+                            ...(typeof d.value === 'string' && d.value.trim() ? { value: d.value.trim() } : {})
+                        }))
+                    : [];
+                return {
+                    syndromeName,
+                    criteriaTotal: Number(item.criteriaTotal) || criteriaDetails.length,
+                    criteriaMet: Number(item.criteriaMet) || 0,
+                    criteriaDetails,
+                    diagnosis: typeof item.diagnosis === 'string' ? item.diagnosis.trim() : '',
+                    confidence: Math.min(100, Math.max(0, Number(item.confidence) || 0)),
+                    ...(typeof item.progressionRisk === 'string' && item.progressionRisk.trim() ? { progressionRisk: item.progressionRisk.trim() } : {}),
+                    ...(typeof item.interventionEffectiveness === 'string' && item.interventionEffectiveness.trim() ? { interventionEffectiveness: item.interventionEffectiveness.trim() } : {})
+                };
+            })
+            .filter(Boolean) as SyndromeScore[]
+        : [];
+
+    // --- Layer 4: Lipid Risk Profile ---
+    const lipidRiskProfile: LipidRiskProfile | undefined = rawAnalysis?.lipidRiskProfile && typeof rawAnalysis.lipidRiskProfile === 'object'
+        ? {
+            ratios: Array.isArray(rawAnalysis.lipidRiskProfile.ratios)
+                ? rawAnalysis.lipidRiskProfile.ratios
+                    .filter((r: any) => r && typeof r === 'object' && typeof r.name === 'string')
+                    .map((r: any) => ({
+                        name: r.name.trim(),
+                        value: Number(r.value) || 0,
+                        reference: typeof r.reference === 'string' ? r.reference.trim() : '',
+                        status: typeof r.status === 'string' ? r.status.trim() : '',
+                        interpretation: typeof r.interpretation === 'string' ? r.interpretation.trim() : ''
+                    }))
+                : [],
+            compositeSummary: typeof rawAnalysis.lipidRiskProfile.compositeSummary === 'string'
+                ? rawAnalysis.lipidRiskProfile.compositeSummary.trim()
+                : '',
+            ...(typeof rawAnalysis.lipidRiskProfile.estimatedCVDRisk === 'string' && rawAnalysis.lipidRiskProfile.estimatedCVDRisk.trim()
+                ? { estimatedCVDRisk: rawAnalysis.lipidRiskProfile.estimatedCVDRisk.trim() } : {}),
+            ...(typeof rawAnalysis.lipidRiskProfile.primaryConcern === 'string' && rawAnalysis.lipidRiskProfile.primaryConcern.trim()
+                ? { primaryConcern: rawAnalysis.lipidRiskProfile.primaryConcern.trim() } : {})
+        }
+        : undefined;
+
+    // --- Layer 5: Action Timeline ---
+    const actionTimeline: ActionTimeline | undefined = rawAnalysis?.actionTimeline && typeof rawAnalysis.actionTimeline === 'object'
+        ? {
+            immediate: normalizeStringList(rawAnalysis.actionTimeline.immediate),
+            urgent: normalizeStringList(rawAnalysis.actionTimeline.urgent),
+            shortTerm: normalizeStringList(rawAnalysis.actionTimeline.shortTerm),
+            mediumTerm: normalizeStringList(rawAnalysis.actionTimeline.mediumTerm),
+            longTerm: normalizeStringList(rawAnalysis.actionTimeline.longTerm),
+            redFlags: normalizeStringList(rawAnalysis.actionTimeline.redFlags)
+        }
+        : undefined;
+
+    // --- Confidence Scoring ---
+    const confidenceScoring: ConfidenceScoring | undefined = rawAnalysis?.confidenceScoring && typeof rawAnalysis.confidenceScoring === 'object'
+        ? {
+            overall: Math.min(100, Math.max(0, Number(rawAnalysis.confidenceScoring.overall) || 0)),
+            missingData: normalizeStringList(rawAnalysis.confidenceScoring.missingData),
+            limitations: normalizeStringList(rawAnalysis.confidenceScoring.limitations)
+        }
+        : undefined;
+
+    // --- Clinical Summary Items ---
+    const clinicalSummaryItems: ClinicalSummaryItem[] = Array.isArray(rawAnalysis?.clinicalSummaryItems)
+        ? rawAnalysis.clinicalSummaryItems
+            .filter((item: any) => item && typeof item === 'object' && typeof item.finding === 'string' && item.finding.trim())
+            .map((item: any) => ({
+                finding: item.finding.trim(),
+                status: ['confirmed', 'probable', 'investigate', 'stable'].includes(item.status) ? item.status : 'investigate'
+            })) as ClinicalSummaryItem[]
+        : [];
+
     return {
         reportId: typeof rawAnalysis?.reportId === 'string' && rawAnalysis.reportId.trim()
             ? rawAnalysis.reportId.trim()
@@ -439,7 +580,14 @@ const sanitizeAnalysisResult = (
         categoryBreakdown,
         comparisons,
         risks,
-        preventiveMeasures
+        preventiveMeasures,
+        ...(unusualFindings.length > 0 ? { unusualFindings } : {}),
+        ...(borderlineFindings.length > 0 ? { borderlineFindings } : {}),
+        ...(syndromeScores.length > 0 ? { syndromeScores } : {}),
+        ...(lipidRiskProfile ? { lipidRiskProfile } : {}),
+        ...(actionTimeline ? { actionTimeline } : {}),
+        ...(confidenceScoring ? { confidenceScoring } : {}),
+        ...(clinicalSummaryItems.length > 0 ? { clinicalSummaryItems } : {})
     };
 };
 
@@ -456,8 +604,8 @@ Your role is to help users with:
 LANGUAGE BEHAVIOR:
 * Detect the user's language automatically when no speech language code is provided
 * If the prompt includes a detected speech language code, use that language for the reply
-* Always reply in the same language the user used
-* If the user mixes languages, respond naturally in that mix
+* Always reply in the dominant detected language the user used
+* Do not mix multiple languages in one response unless the user explicitly asks for translation
 * Keep responses simple, conversational, and voice-friendly
 
 VOICE RESPONSE STYLE:
@@ -558,7 +706,7 @@ Output:
  * Supports: Hindi, Telugu, Tamil, Kannada, Bengali, Malayalam, Gujarati, Marathi
  * Returns detected language code or 'en-IN' as fallback
  */
-const detectLanguageFromText = (text: string): string => {
+export const detectLanguageFromText = (text: string): string => {
   if (!text || text.trim().length === 0) return 'en-IN';
 
   // Count script characters to handle mixed-language text
@@ -617,7 +765,31 @@ const detectLanguageFromText = (text: string): string => {
   const maxCount = Math.max(...Object.values(counts));
   
   if (maxCount === 0) {
-    // No Indian scripts found, default to English
+    const normalizedText = text.toLowerCase();
+    const words = normalizedText.match(/[a-z]+/g) || [];
+    const wordSet = new Set(words);
+
+    const countMatches = (markers: string[]) =>
+      markers.reduce((count, marker) => count + (wordSet.has(marker) ? 1 : 0), 0);
+
+    const hindiScore = countMatches([
+      'mujhe', 'mera', 'meri', 'mere', 'hai', 'hain', 'kya', 'nahi', 'nahin',
+      'bukhar', 'dard', 'saans', 'khansi', 'gala', 'kripya', 'thoda', 'kaise'
+    ]);
+    const teluguScore = countMatches([
+      'naaku', 'naku', 'nenu', 'undi', 'ledu', 'enti', 'ela', 'ayithe',
+      'kavali', 'cheyyandi', 'cheyandi', 'noppi', 'thala', 'jwaram', 'daggu'
+    ]);
+    const tamilScore = countMatches([
+      'enakku', 'naan', 'irukku', 'illa', 'enna', 'epdi', 'venum', 'vali',
+      'thalai', 'kaichal', 'irukkirathu'
+    ]);
+
+    if (teluguScore >= 2 && teluguScore >= hindiScore && teluguScore >= tamilScore) return 'te-IN';
+    if (hindiScore >= 2 && hindiScore >= teluguScore && hindiScore >= tamilScore) return 'hi-IN';
+    if (tamilScore >= 2 && tamilScore >= hindiScore && tamilScore >= teluguScore) return 'ta-IN';
+
+    // No Indian scripts or strong romanized markers found, default to English
     return 'en-IN';
   }
 
@@ -635,7 +807,7 @@ const detectLanguageFromText = (text: string): string => {
   return 'en-IN';
 };
 
-const normalizeLanguageCode = (languageCode?: unknown): string => {
+export const normalizeLanguageCode = (languageCode?: unknown): string => {
     if (typeof languageCode !== 'string') return 'auto';
 
     const normalized = languageCode.trim().toLowerCase();
@@ -669,18 +841,18 @@ const getChatLanguageInstruction = (languageCode?: string): string => {
 
     if (normalizedLanguageCode === 'auto') {
         return `LANGUAGE BEHAVIOR:
-- Detect the user's language from their latest message and reply in that same language.
-- If the user writes in English, reply in English. If in Hindi, reply in Hindi. Match their language exactly.
-- If the user mixes languages, reply naturally in that mix.
+- Detect the user's dominant language from their latest message and reply only in that language.
+- If the user writes in English, reply in English. If in Hindi, reply in Hindi. Match the dominant language exactly.
+- If the user mixes languages, choose the dominant detected language and keep the whole answer in that one language.
 - The patient's medical records may be written in any language. Do not let that override the reply language — always match the USER's message language.
-- Keep the answer readable and avoid switching languages unless the user does first.`;
+- Keep the answer readable and avoid switching languages unless the user explicitly asks for translation.`;
     }
 
     const langName = LANGUAGE_NAMES[normalizedLanguageCode] || normalizedLanguageCode;
 
     return `LANGUAGE BEHAVIOR:
 - Reply ONLY in ${langName}.
-- Keep the entire response in ${langName} unless the user explicitly mixes languages.
+- Keep the entire response in ${langName}; do not mix in other languages unless the user explicitly asks for translation.
 - The patient's medical records may be written in English or other languages. Use them for facts, but always keep the reply language as ${langName}.`;
 };
 
@@ -907,7 +1079,7 @@ export const analyzeSymptoms = async (symptoms: string, imageBase64?: string, mi
         return normalizeTriageResult(parsed, detectedLanguageCode);
     } catch (error) {
         console.error("Grok Triage Error:", error);
-        return normalizeTriageResult({}, normalizedLanguageCode);
+        return normalizeTriageResult({}, detectedLanguageCode);
     }
 };
 
@@ -1027,26 +1199,66 @@ ${getChatLanguageInstruction(
 };
 
 const EXTRACTION_SYSTEM_INSTRUCTION = `
-You are an expert OCR medical AI for lab reports, health checkups, and diagnostic summaries.
-Extract all visible medical biomarkers and report metadata from the uploaded image.
-Normalize names to standard medical terms and only keep numeric test results.
+You are an expert medical AI for parsing ANY medical document: lab reports, discharge summaries, prescriptions, imaging reports, health checkups, doctor's notes, etc.
+Extract all visible medical data from the uploaded image.
+
+For lab reports: extract all biomarkers with numeric values.
+For discharge summaries / clinical notes: extract vitals (BP, HR, SpO2, temp) as biomarkers and capture diagnoses/findings.
+For any document: extract all available numeric medical values as biomarkers.
+
 Return ONLY valid JSON matching:
 { 
     "date": "YYYY-MM-DD", 
-    "type": "Report Type", 
+    "type": "Document Type (Lab Report, Discharge Summary, Health Checkup, etc.)", 
+    "summary": "Brief 2-3 sentence summary of key findings",
     "biomarkers": [ 
       { "name": "string", "value": number, "unit": "string", "category": "Metabolic"|"Cardiovascular"|"Hematology"|"Renal"|"Other" }
+    ],
+    "findings": ["key clinical finding 1", "key clinical finding 2"],
+    "prescriptions": [
+      { "name": "string", "dosage": "string", "frequency": "string", "type": "string", "description": "string" }
     ]
 }
+
+Rules:
+- Extract EVERY numeric test result as a biomarker
+- If no numeric biomarkers exist, biomarkers array can be empty
+- Always populate findings with key observations
+- Do NOT invent values. Only extract what is visible.
 `;
 
 const ANALYSIS_SYSTEM_INSTRUCTION = `
-You are MediSense, a patient-first medical report interpretation assistant.
-Your job is to turn extracted medical values into a concise, calm, and useful explanation for an everyday user.
+You are MediSense, a patient-first medical report interpretation assistant applying a 5-LAYER CLINICAL REFINEMENT FRAMEWORK.
+Your task is NOT to repeat what the numbers say, but to transform them into CLINICALLY ACTIONABLE INSIGHTS.
 Never claim to diagnose disease. Use supportive, plain-language guidance.
 Return ONLY valid JSON.
 
-Schema:
+The input may contain:
+- Biomarkers (numeric lab values) from lab reports
+- Clinical findings (text observations) from discharge summaries, doctor's notes, etc.
+- A summary of the document
+- Prescriptions/medications
+- Patient history from prior reports
+
+═══════ 5-LAYER ANALYSIS FRAMEWORK ═══════
+
+LAYER 1 — UNUSUAL FINDINGS INVESTIGATION:
+For EACH result outside reference range: flag it, rank likely causes, explain clinical significance, specify next steps and urgency (IMMEDIATE/URGENT/ROUTINE/INVESTIGATE).
+
+LAYER 2 — BORDERLINE & UPPER-LIMIT TRACKING:
+For results in the upper or lower 10% of normal range: flag as borderline, explain what it predicts, give monitoring frequency and actionable threshold.
+
+LAYER 3 — SYNDROME SCORING & QUANTIFICATION:
+Calculate specific scores for applicable syndromes (metabolic syndrome, diabetes risk, thyroid dysfunction, etc.). Provide criteria met vs total, confidence percentage, and progression risk.
+
+LAYER 4 — COMPREHENSIVE LIPID RISK ASSESSMENT (when lipid data present):
+Calculate all lipid ratios (TC/HDL, LDL/HDL, TG/HDL), VLDL estimation, composite risk assessment, and estimated CVD risk.
+
+LAYER 5 — TIMELINE-SPECIFIC ACTION ITEMS:
+Assign specific actions to specific timeframes: immediate (this week), urgent (2-4 weeks), short-term (3 months), medium-term (6 months), long-term (annual). Include red flags for emergency contact.
+
+═══════ OUTPUT JSON SCHEMA ═══════
+
 {
   reportId: string,
   summary: string,
@@ -1063,18 +1275,90 @@ Schema:
   reportType: string,
   reportDate: string,
   extractionQuality: "High" | "Medium" | "Low",
-  categoryBreakdown: [{ name, total, flagged }],
-  comparisons: [{ name, currentValue, previousValue, unit, deltaPercent, velocity, status }],
-  risks: [{ condition, probability, reasoning, forecastHorizon }],
-  preventiveMeasures: [{ category, title, description, impact }]
+  categoryBreakdown: [{ name: "Metabolic"|"Cardiovascular"|"Hematology"|"Renal"|"Other", total: number, flagged: number }],
+  comparisons: [{ name, currentValue, previousValue, unit, deltaPercent, velocity, status: "Normal"|"Warning"|"Critical" }],
+  risks: [{ condition, probability: "Low"|"Medium"|"High", reasoning, forecastHorizon }],
+  preventiveMeasures: [{ category: "Diet"|"Exercise"|"Habit"|"Medical", title, description, impact: "High"|"Medium"|"Low" }],
+
+  unusualFindings: [{
+    testName: string,
+    result: number,
+    unit: string,
+    referenceRange: string,
+    deviation: string,
+    expectedCauses: string[],
+    clinicalSignificance: string,
+    nextSteps: string[],
+    urgency: "IMMEDIATE" | "URGENT" | "ROUTINE" | "INVESTIGATE"
+  }],
+
+  borderlineFindings: [{
+    testName: string,
+    result: number,
+    unit: string,
+    referenceRange: string,
+    boundaryType: "UPPER" | "LOWER",
+    distanceToAbnormal: string,
+    interpretation: string,
+    prediction: string,
+    monitoringFrequency: string,
+    actionableThreshold: string,
+    patientCounseling: string
+  }],
+
+  syndromeScores: [{
+    syndromeName: string,
+    criteriaTotal: number,
+    criteriaMet: number,
+    criteriaDetails: [{ criterion: string, status: "MET"|"NOT_MET"|"MISSING", value: string }],
+    diagnosis: string,
+    confidence: number,
+    progressionRisk: string,
+    interventionEffectiveness: string
+  }],
+
+  lipidRiskProfile: {
+    ratios: [{ name: string, value: number, reference: string, status: string, interpretation: string }],
+    compositeSummary: string,
+    estimatedCVDRisk: string,
+    primaryConcern: string
+  },
+
+  actionTimeline: {
+    immediate: string[],
+    urgent: string[],
+    shortTerm: string[],
+    mediumTerm: string[],
+    longTerm: string[],
+    redFlags: string[]
+  },
+
+  confidenceScoring: {
+    overall: number,
+    missingData: string[],
+    limitations: string[]
+  },
+
+  clinicalSummaryItems: [{ finding: string, status: "confirmed"|"probable"|"investigate"|"stable" }]
 }
 
-Rules:
+═══════ RULES ═══════
 - Keep summary patient-friendly and easy to scan.
 - Mention what changed from prior reports when history exists.
 - Use "Critical" only for genuinely concerning values.
 - If there is not enough prior history, use null for previousValue and deltaPercent.
 - Provide 2-4 practical next steps and 2-3 useful questions the patient can ask a doctor.
+- For discharge summaries and non-lab documents: focus on findings, risks, and follow-up.
+- If biomarkers array is empty, comparisons can be empty — focus on findings-based analysis.
+- No abnormal result gets ignored. Every outlier gets explained in unusualFindings.
+- Results at the edge of normal are EARLY WARNING SIGNS. Track them in borderlineFindings.
+- Provide SPECIFIC SCORES in syndromeScores, not generic alerts.
+- In actionTimeline, assign specific actions to specific timeframes. No vague "monitoring."
+- In confidenceScoring, score overall confidence 0-100 based on data completeness.
+- List ALL missing critical data in confidenceScoring.missingData.
+- Only include lipidRiskProfile when lipid panel data is present.
+- Only include syndromeScores when enough data exists to score (at least 2 criteria assessable).
+- Include clinicalSummaryItems as a concise list of all findings with their status.
 `;
 
 export const processMedicalReport = async (
@@ -1088,9 +1372,10 @@ export const processMedicalReport = async (
     let extraction: any = {};
 
     const isPDF = mimeType === 'application/pdf';
+    const isImage = mimeType.startsWith('image/');
 
-    if (isPDF) {
-        // ── PDF path: send to server for text extraction ────────────
+    // ── Route both PDFs and images through server Landing AI extraction ──
+    if (isPDF || isImage) {
         try {
             const byteCharacters = atob(base64Image);
             const byteNumbers = new Array(byteCharacters.length);
@@ -1100,51 +1385,77 @@ export const processMedicalReport = async (
             const byteArray = new Uint8Array(byteNumbers);
             const blob = new Blob([byteArray], { type: mimeType });
 
+            const filename = isPDF ? 'report.pdf' : 'report.jpg';
             const formData = new FormData();
-            formData.append('file', blob, 'report.pdf');
+            formData.append('file', blob, filename);
 
+            const authToken = getAuthToken();
+            if (!authToken) {
+                throw new Error(handleAuthFailure('No authentication token provided.'));
+            }
+
+            console.log('[grokService] Sending file to extract-pdf, token present:', !!authToken);
+            
             const response = await fetch(`${API_BASE}/api/analyze/extract-pdf`, {
                 method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${authToken}`
+                },
                 body: formData,
             });
 
+            console.log('[grokService] Extract-pdf response status:', response.status);
+
             if (!response.ok) {
                 const errData = await response.json().catch(() => ({}));
-                throw new Error(errData.error || `Server returned ${response.status}`);
+                console.error('[grokService] Extract-pdf error:', errData);
+                const message = errData.error || errData.message || errData.details || `Server returned ${response.status}`;
+                if (response.status === 401) {
+                    throw new Error(handleAuthFailure(message));
+                }
+                throw new Error(errData.details ? `${message}: ${errData.details}` : message);
             }
 
             extraction = await response.json();
         } catch (e: any) {
-            console.error("PDF Extraction Error:", e);
-            throw new Error(e.message || "Failed to extract data from PDF.");
+            console.error("Landing AI Extraction Error:", e);
+            // Fallback: try Groq vision directly for images
+            if (isImage) {
+                try {
+                    const completion = await groqChat({
+                        model: GROK_MODEL_VISION,
+                        messages: [
+                            { role: 'system', content: EXTRACTION_SYSTEM_INSTRUCTION },
+                            {
+                                role: 'user',
+                                content: [
+                                    { type: 'text', text: "Extract medical data from this image." },
+                                    { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Image}` } }
+                                ]
+                            }
+                        ]
+                    });
+                    extraction = parseJSON(completion.choices[0].message.content || '{}');
+                } catch (visionErr) {
+                    console.error("Vision fallback also failed:", visionErr);
+                    throw new Error(e.message || "Failed to extract data from document.");
+                }
+            } else {
+                throw new Error(e.message || "Failed to extract data from PDF.");
+            }
         }
     } else {
-        // ── Image path: use Groq vision model directly ─────────────
-        try {
-            const completion = await groqChat({
-                model: GROK_MODEL_VISION,
-                messages: [
-                    { role: 'system', content: EXTRACTION_SYSTEM_INSTRUCTION },
-                    {
-                        role: 'user',
-                        content: [
-                            { type: 'text', text: "Extract medical data from this image." },
-                            { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Image}` } }
-                        ]
-                    }
-                ]
-            });
-            extraction = parseJSON(completion.choices[0].message.content || '{}');
-        } catch (e) {
-            console.error("Vision Extraction Error:", e);
-            throw new Error("Failed to extract data via Groq Vision.");
-        }
+        throw new Error(`Unsupported file type: ${mimeType}`);
     }
 
     const normalizedBiomarkers = normalizeBiomarkers(extraction.biomarkers);
+    const findings: string[] = Array.isArray(extraction.findings)
+        ? extraction.findings.filter((f: unknown): f is string => typeof f === 'string' && f.trim().length > 0)
+        : [];
+    const extractionSummary: string = typeof extraction.summary === 'string' ? extraction.summary.trim() : '';
 
-    if (normalizedBiomarkers.length === 0) {
-        throw new Error("Could not extract any biomarkers.");
+    if (normalizedBiomarkers.length === 0 && findings.length === 0 && !extractionSummary) {
+        throw new Error("Could not extract any medical data from this document.");
     }
 
     const extractedRecord: MedicalReport = {
@@ -1152,6 +1463,8 @@ export const processMedicalReport = async (
         date: extraction.date || new Date().toISOString(),
         type: extraction.type || "Uploaded Report",
         biomarkers: normalizedBiomarkers,
+        ...(findings.length > 0 && { findings }),
+        ...(extractionSummary && { summary: extractionSummary }),
         ...(extraction.prescriptions && extraction.prescriptions.length > 0 && { prescriptions: extraction.prescriptions })
     };
 

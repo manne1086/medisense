@@ -7,11 +7,12 @@ import { MyReports } from './components/MyReports';
 import { FloatingAssistant } from './components/FloatingAssistant';
 import { AlertTriangle, Activity, FileText, Pill, ClipboardList } from './components/Icons';
 import { Login } from './components/Login';
-import { isAuthenticated, handleAuthCallback, logout } from './services/authService';
+import { AUTH_FAILURE_MESSAGE, isAuthenticated, handleAuthCallback, logout } from './services/authService';
 
 function App() {
   const [activeTab, setActiveTab] = useState<'triage' | 'analysis' | 'prescription' | 'myreports'>('triage');
   const [isAuth, setIsAuth] = useState(false);
+  const [authMessage, setAuthMessage] = useState('');
 
   useEffect(() => {
     if (handleAuthCallback()) {
@@ -21,10 +22,21 @@ function App() {
     }
   }, []);
 
+  useEffect(() => {
+    const handleAuthFailed = (event: Event) => {
+      const detail = (event as CustomEvent<{ message?: string }>).detail;
+      setAuthMessage(detail?.message || AUTH_FAILURE_MESSAGE);
+      setIsAuth(false);
+    };
+
+    window.addEventListener('medisense-auth-failed', handleAuthFailed);
+    return () => window.removeEventListener('medisense-auth-failed', handleAuthFailed);
+  }, []);
+
   if (!isAuth) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-blue-50 p-4">
-        <Login />
+        <Login message={authMessage} />
       </div>
     );
   }

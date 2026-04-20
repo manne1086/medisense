@@ -32,6 +32,7 @@ A patient-first AI medical assistant using Retrieval-Augmented Generation (RAG) 
 - Express.js
 - MongoDB (medical records storage)
 - Groq AI API (models: llama-3.3-70b, llama-3.2-11b-vision)
+- Landing AI ADE (PDF & document parsing)
 - OCR for PDF extraction
 
 ## Project Structure
@@ -110,6 +111,7 @@ medisense/
    GOOGLE_CLIENT_ID=your_google_client_id
    GOOGLE_CLIENT_SECRET=your_google_client_secret
    GROQ_API_KEY=your_groq_api_key
+   LANDING_AI_API_KEY=your_landing_ai_api_key
    PORT=5000
    ```
 

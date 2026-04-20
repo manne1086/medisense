@@ -17,7 +17,7 @@ import {
   Stethoscope,
   UserRound
 } from 'lucide-react';
-import { chatWithAssistant, analyzeSymptoms } from '../services/grokService';
+import { chatWithAssistant, analyzeSymptoms, detectLanguageFromText, normalizeLanguageCode } from '../services/grokService';
 import { getHistory } from '../services/storageService';
 
 const renderFormattedText = (text: string) => {
@@ -49,6 +49,7 @@ interface Message {
   content: string;
   image?: string;
   timestamp: Date;
+  languageCode?: string;
 }
 
 const HeaderAssistantIcon: React.FC = () => (
@@ -111,6 +112,7 @@ export const AIDoctor: React.FC = () => {
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const silenceCheckRef = useRef<number | null>(null);
+  const detectedVoiceLanguageRef = useRef<string>('auto');
 
   // Keep refs in sync
   useEffect(() => { inputValueRef.current = inputValue; }, [inputValue]);
@@ -362,6 +364,10 @@ export const AIDoctor: React.FC = () => {
 
       const data = await res.json();
       if (data.text) {
+        const detectedLanguage = normalizeLanguageCode(data.language_code || data.language);
+        if (detectedLanguage !== 'auto') {
+          detectedVoiceLanguageRef.current = detectedLanguage;
+        }
         setInputValue(prev => prev ? `${prev} ${data.text}` : data.text);
       } else {
         alert('Could not transcribe audio. Please try again or type your message.');
@@ -378,8 +384,25 @@ export const AIDoctor: React.FC = () => {
 
   const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
 
+  const resolveTurnLanguage = useCallback((text: string, preferredLanguage?: string) => {
+    const explicitLanguage = normalizeLanguageCode(preferredLanguage || activeLanguage);
+    if (explicitLanguage !== 'auto') return explicitLanguage;
+
+    const voiceLanguage = normalizeLanguageCode(detectedVoiceLanguageRef.current);
+    if (voiceLanguage !== 'auto') return voiceLanguage;
+
+    return detectLanguageFromText(text);
+  }, [activeLanguage]);
+
+  const getSpeechLanguageParts = (languageCode?: string) => {
+    const normalized = normalizeLanguageCode(languageCode);
+    const full = normalized === 'auto' ? 'en-IN' : normalized;
+    const base = full.split('-')[0].toLowerCase();
+    return { full, base };
+  };
+
   // Fallback: Browser SpeechSynthesis for when ElevenLabs is unavailable
-  const useBrowserTTS = (text: string, messageId: string) => {
+  const useBrowserTTS = (text: string, messageId: string, languageCode?: string) => {
     if (!('speechSynthesis' in window)) {
       console.warn('Browser TTS not supported');
       setSpeakingId(null);
@@ -390,28 +413,17 @@ export const AIDoctor: React.FC = () => {
     const utterance = new SpeechSynthesisUtterance(text);
 
     const voices = window.speechSynthesis.getVoices();
-    const langMap: Record<string, string> = {
-      'auto': 'en',
-      'en-IN': 'en',
-      'hi-IN': 'hi',
-      'te-IN': 'te',
-      'ta-IN': 'ta',
-      'kn-IN': 'kn',
-      'bn-IN': 'bn',
-      'ml-IN': 'ml',
-      'gu-IN': 'gu',
-      'or-IN': 'or',
-    };
-    const targetLang = langMap[activeLanguage] || 'en';
-    const langVoices = voices.filter(v => v.lang.startsWith(targetLang));
+    const { full: targetFullLang, base: targetBaseLang } = getSpeechLanguageParts(languageCode);
+    utterance.lang = targetFullLang;
+    const langVoices = voices.filter(v => v.lang.toLowerCase().startsWith(targetBaseLang));
     
     // Prefer female voices
     const isFemale = (v: SpeechSynthesisVoice) =>
       /female|woman|zira|susan|samantha|heera|swara|shruti/i.test(v.name);
     const voice =
       langVoices.find(isFemale) ||
-      voices.filter(v => v.lang.startsWith('en')).find(isFemale) ||
       langVoices[0] ||
+      voices.filter(v => v.lang.toLowerCase().startsWith('en')).find(isFemale) ||
       voices.find(v => v.lang.startsWith('en'));
 
     if (voice) utterance.voice = voice;
@@ -429,7 +441,7 @@ export const AIDoctor: React.FC = () => {
     window.speechSynthesis.speak(utterance);
   };
 
-  const speakText = useCallback(async (text: string, messageId: string) => {
+  const speakText = useCallback(async (text: string, messageId: string, languageCode?: string) => {
     // If already speaking this message, stop
     if (speakingId === messageId) {
       if (ttsAudioRef.current) {
@@ -449,13 +461,7 @@ export const AIDoctor: React.FC = () => {
     window.speechSynthesis?.cancel();
 
     const cleaned = stripMarkdown(text);
-    const langMap: Record<string, string> = {
-      'auto': 'en',
-      'en-IN': 'en',
-      'hi-IN': 'hi',
-      'te-IN': 'te',
-    };
-    const language = langMap[activeLanguage] || 'en';
+    const resolvedLanguageCode = resolveTurnLanguage(cleaned, languageCode);
 
     setSpeakingId(messageId);
 
@@ -464,19 +470,20 @@ export const AIDoctor: React.FC = () => {
       const res = await fetch(`${apiBase}/api/tts/speak`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: cleaned, language }),
+        // Pass full language code (hi-IN, te-IN, etc.) for proper language detection
+        body: JSON.stringify({ text: cleaned, language_code: resolvedLanguageCode }),
       });
 
       // If ElevenLabs is unavailable (402, 503, etc.), use browser TTS
       if (res.status === 503 || res.status === 402 || res.status === 403) {
         console.warn('ElevenLabs unavailable, using browser TTS');
-        useBrowserTTS(cleaned, messageId);
+        useBrowserTTS(cleaned, messageId, resolvedLanguageCode);
         return;
       }
 
       if (!res.ok) {
         console.warn('ElevenLabs error:', res.status, 'falling back to browser TTS');
-        useBrowserTTS(cleaned, messageId);
+        useBrowserTTS(cleaned, messageId, resolvedLanguageCode);
         return;
       }
 
@@ -499,9 +506,9 @@ export const AIDoctor: React.FC = () => {
       await audio.play();
     } catch (err) {
       console.error('ElevenLabs TTS error, falling back to browser:', err);
-      useBrowserTTS(cleaned, messageId);
+      useBrowserTTS(cleaned, messageId, resolvedLanguageCode);
     }
-  }, [speakingId, activeLanguage]);
+  }, [speakingId, resolveTurnLanguage]);
 
   // Cancel speech & timers on unmount
   useEffect(() => {
@@ -541,6 +548,7 @@ export const AIDoctor: React.FC = () => {
     }
     
     if (!inputValue.trim() && !imageFile) return;
+    const turnLanguageCode = resolveTurnLanguage(inputValue);
 
     // Add user message
     const userMessage: Message = {
@@ -548,7 +556,8 @@ export const AIDoctor: React.FC = () => {
       role: 'user',
       content: inputValue || 'Attached image',
       image: selectedImage || undefined,
-      timestamp: new Date()
+      timestamp: new Date(),
+      languageCode: turnLanguageCode
     };
 
     setMessages(prev => [...prev, userMessage]);
@@ -568,12 +577,14 @@ export const AIDoctor: React.FC = () => {
         mimeType = imageFile.type;
         
         // Use symptom analysis with image
-        const result = await analyzeSymptoms(inputValue, base64Image, mimeType, activeLanguage);
+        const result = await analyzeSymptoms(inputValue, base64Image, mimeType, turnLanguageCode);
+        const resultLanguageCode = normalizeLanguageCode(result.language_code || turnLanguageCode);
         assistantResponse = result.text || 'I could not analyze the image clearly. Could you please describe your symptoms or upload a clearer photo?';
         
         if (result.followUpQuestions && result.followUpQuestions.length > 0) {
           assistantResponse += '\n\n' + result.followUpQuestions.map((q: string) => `• ${q}`).join('\n');
         }
+        detectedVoiceLanguageRef.current = resultLanguageCode;
       } else if (inputValue.trim()) {
         // Regular chat message
         const result = await chatWithAssistant(
@@ -583,25 +594,30 @@ export const AIDoctor: React.FC = () => {
           })),
           inputValue,
           medicalRecords,
-          activeLanguage,
+          turnLanguageCode,
           voiceConverseModeRef.current
         );
         assistantResponse = result;
+        detectedVoiceLanguageRef.current = turnLanguageCode;
       }
 
       // Add assistant response
+      const assistantLanguageCode = detectedVoiceLanguageRef.current !== 'auto'
+        ? detectedVoiceLanguageRef.current
+        : turnLanguageCode;
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
         content: assistantResponse,
-        timestamp: new Date()
+        timestamp: new Date(),
+        languageCode: assistantLanguageCode
       };
 
       setMessages(prev => [...prev, assistantMessage]);
 
       // Auto-speak response in voice converse mode
       if (voiceConverseModeRef.current && assistantResponse) {
-        speakText(assistantResponse, assistantMessage.id);
+        speakText(assistantResponse, assistantMessage.id, assistantLanguageCode);
       }
     } catch (error) {
       console.error('Chat error:', error);
@@ -711,7 +727,7 @@ export const AIDoctor: React.FC = () => {
                     {copiedId === message.id ? 'Copied!' : 'Copy'}
                   </button>
                   <button
-                    onClick={() => speakText(message.content, message.id)}
+                    onClick={() => speakText(message.content, message.id, message.languageCode)}
                     className={`text-xs flex items-center gap-1 px-2 py-1 rounded transition-colors ${
                       speakingId === message.id
                         ? 'text-blue-600 bg-blue-50 font-bold'
@@ -774,7 +790,10 @@ export const AIDoctor: React.FC = () => {
               {/* Text Input */}
               <textarea
                 value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
+                onChange={(e) => {
+                  detectedVoiceLanguageRef.current = 'auto';
+                  setInputValue(e.target.value);
+                }}
                 onKeyPress={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();

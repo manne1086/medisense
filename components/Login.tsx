@@ -1,9 +1,9 @@
 
 import React from 'react';
 import { loginWithGoogle } from '../services/authService';
-import { Activity } from './Icons';
+import { Activity, AlertCircle } from './Icons';
 
-export const Login: React.FC = () => {
+export const Login: React.FC<{ message?: string }> = ({ message }) => {
   return (
     <div className="flex flex-col items-center justify-center min-h-[400px] p-8 bg-white/60 backdrop-blur-xl rounded-[3rem] border border-white/60 shadow-2xl">
       <div className="p-6 bg-[#008AD1] text-white rounded-3xl shadow-2xl mb-8 animate-bounce">
@@ -13,6 +13,13 @@ export const Login: React.FC = () => {
       <p className="text-gray-500 mb-10 text-center max-w-sm font-medium leading-relaxed">
         Your AI-powered medical companion. Please sign in to securely store and analyze your health data.
       </p>
+
+      {message && (
+        <div className="mb-6 flex items-start gap-2 rounded-2xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 border border-red-100 max-w-sm">
+          <AlertCircle size={18} className="shrink-0 mt-0.5" />
+          <span>{message}</span>
+        </div>
+      )}
       
       <button
         onClick={loginWithGoogle}

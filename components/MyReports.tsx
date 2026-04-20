@@ -332,19 +332,29 @@ export const MyReports: React.FC = () => {
   const [reports, setReports] = useState<MedicalReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedReport, setSelectedReport] = useState<MedicalReport | null>(null);
+  const [lastRefresh, setLastRefresh] = useState<number>(Date.now());
 
   const fetchReports = async () => {
     setLoading(true);
-    const data = await getHistory();
-    // Sort newest first
-    data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    setReports(data);
-    setLoading(false);
+    try {
+      const data = await getHistory();
+      // Sort newest first
+      data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      setReports(data);
+    } catch (error) {
+      console.error('Failed to fetch reports:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
     fetchReports();
-  }, []);
+  }, [lastRefresh]);
+
+  const handleRefresh = async () => {
+    setLastRefresh(Date.now());
+  };
 
   if (loading) {
     return (
@@ -364,7 +374,7 @@ export const MyReports: React.FC = () => {
           onBack={() => setSelectedReport(null)}
           onDeleted={() => {
             setSelectedReport(null);
-            fetchReports();
+            handleRefresh();
           }}
         />
       </div>
@@ -405,7 +415,7 @@ export const MyReports: React.FC = () => {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <button onClick={fetchReports} className="flex items-center gap-2 text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-4 py-2.5 rounded-xl transition-colors">
+            <button onClick={handleRefresh} className="flex items-center gap-2 text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-4 py-2.5 rounded-xl transition-colors">
               <RotateCcw size={14} /> Refresh
             </button>
           </div>

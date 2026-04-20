@@ -66,9 +66,9 @@ export const ModulePrescription: React.FC = () => {
             };
             await saveReport(report);
             alert("Prescription saved to your profile!");
-        } catch (error) {
+        } catch (error: any) {
             console.error("Failed to save prescription:", error);
-            alert("Failed to save prescription. Please try again.");
+            alert(`Failed to save prescription: ${error.message || 'Please try again.'}`);
         } finally {
             setIsSaving(false);
         }

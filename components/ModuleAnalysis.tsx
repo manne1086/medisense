@@ -4,10 +4,12 @@ import {
   ArrowUpRight, ArrowDownRight, Activity, Info, Brain, Eye, Sparkles, Shield,
   Clock, RotateCcw, ZoomIn, AlertCircle, FileImage,
   Beaker, CircleCheck, BarChart3, Flame, Droplets,
-  Heart, Zap, Target, Gauge, BadgeCheck, ShieldCheck, Microscope, Scan
+  Heart, Zap, Target, Gauge, BadgeCheck, ShieldCheck, Microscope, Scan,
+  AlertTriangle, ClipboardList, TriangleAlert
 } from './Icons';
 import { processMedicalReport } from '../services/grokService';
 import { getHistory, saveReport, clearHistory } from '../services/storageService';
+import { analysisCache } from '../services/cacheService';
 import {
   MedicalReport,
   AIAnalysisResult,
@@ -17,7 +19,14 @@ import {
   AnalysisOverview,
   InsightConfidence,
   AnalysisCategoryBreakdown,
-  PatientOverallStatus
+  PatientOverallStatus,
+  UnusualFinding,
+  BorderlineFinding,
+  SyndromeScore,
+  LipidRiskProfile,
+  ActionTimeline,
+  ConfidenceScoring,
+  ClinicalSummaryItem
 } from '../types';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -957,6 +966,332 @@ const DetailedInterpretation: React.FC<{
   </div>
 );
 
+// ─── 5-Layer Refined Analysis Components ─────────────────────────────
+
+const urgencyColors: Record<string, string> = {
+  IMMEDIATE: 'bg-red-600 text-white',
+  URGENT: 'bg-amber-500 text-white',
+  ROUTINE: 'bg-blue-500 text-white',
+  INVESTIGATE: 'bg-purple-500 text-white'
+};
+
+const UnusualFindingsPanel: React.FC<{ findings: UnusualFinding[] }> = ({ findings }) => (
+  <div className="animate-fadeInUp">
+    <div className="flex items-center gap-2 mb-4">
+      <AlertCircle size={18} className="text-red-500" />
+      <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">Unusual Findings Investigation</h3>
+      <span className="ml-auto text-[10px] font-bold text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{findings.length} found</span>
+    </div>
+    <div className="space-y-4">
+      {findings.map((f, idx) => (
+        <div key={idx} className="glass-panel rounded-2xl p-6 border border-white/60 hover:shadow-lg transition-all">
+          <div className="flex items-start justify-between mb-3">
+            <div>
+              <h5 className="text-base font-bold text-gray-900">{f.testName}</h5>
+              <p className="text-sm text-gray-500 font-medium">{f.result} {f.unit} <span className="text-gray-400">| Ref: {f.referenceRange}</span></p>
+            </div>
+            <span className={`shrink-0 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${urgencyColors[f.urgency] || urgencyColors.INVESTIGATE}`}>
+              {f.urgency}
+            </span>
+          </div>
+          {f.deviation && <p className="text-sm text-red-600 font-semibold mb-2">{f.deviation}</p>}
+          <p className="text-sm text-gray-600 font-medium leading-relaxed mb-3">{f.clinicalSignificance}</p>
+          {f.expectedCauses.length > 0 && (
+            <div className="mb-3">
+              <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider">Possible Causes</span>
+              <div className="flex flex-wrap gap-2 mt-1.5">
+                {f.expectedCauses.map((cause, i) => (
+                  <span key={i} className="text-xs font-semibold bg-gray-100 text-gray-700 px-2.5 py-1 rounded-lg">{cause}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          {f.nextSteps.length > 0 && (
+            <div>
+              <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider">Next Steps</span>
+              <ul className="mt-1.5 space-y-1">
+                {f.nextSteps.map((step, i) => (
+                  <li key={i} className="text-xs text-gray-600 font-medium flex items-start gap-2">
+                    <ArrowUpRight size={12} className="text-indigo-400 shrink-0 mt-0.5" /> {step}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  </div>
+);
+
+const BorderlineFindingsPanel: React.FC<{ findings: BorderlineFinding[] }> = ({ findings }) => (
+  <div className="animate-fadeInUp">
+    <div className="flex items-center gap-2 mb-4">
+      <Gauge size={18} className="text-amber-500" />
+      <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">Borderline & Early Warning Tracker</h3>
+      <span className="ml-auto text-[10px] font-bold text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{findings.length} tracked</span>
+    </div>
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {findings.map((f, idx) => (
+        <div key={idx} className="glass-panel rounded-2xl p-5 border border-amber-100 hover:shadow-lg transition-all">
+          <div className="flex items-center justify-between mb-2">
+            <h5 className="text-sm font-bold text-gray-900">{f.testName}</h5>
+            <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${f.boundaryType === 'UPPER' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
+              {f.boundaryType} boundary
+            </span>
+          </div>
+          <p className="text-sm text-gray-600 font-medium mb-1">{f.result} {f.unit} <span className="text-gray-400">| Ref: {f.referenceRange}</span></p>
+          <p className="text-xs text-amber-600 font-semibold mb-2">{f.distanceToAbnormal}</p>
+          <p className="text-xs text-gray-600 leading-relaxed mb-2">{f.interpretation}</p>
+          <div className="grid grid-cols-2 gap-2 text-[10px]">
+            <div className="bg-gray-50 rounded-lg p-2">
+              <span className="font-black text-gray-400 uppercase tracking-wider block">Monitor</span>
+              <span className="font-bold text-gray-700">{f.monitoringFrequency}</span>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-2">
+              <span className="font-black text-gray-400 uppercase tracking-wider block">Threshold</span>
+              <span className="font-bold text-gray-700">{f.actionableThreshold}</span>
+            </div>
+          </div>
+          {f.prediction && <p className="text-xs text-gray-500 font-medium mt-2 italic">{f.prediction}</p>}
+          {f.patientCounseling && <p className="text-xs text-indigo-600 font-medium mt-2">{f.patientCounseling}</p>}
+        </div>
+      ))}
+    </div>
+  </div>
+);
+
+const SyndromeScoresPanel: React.FC<{ scores: SyndromeScore[] }> = ({ scores }) => (
+  <div className="animate-fadeInUp">
+    <div className="flex items-center gap-2 mb-4">
+      <Microscope size={18} className="text-purple-500" />
+      <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">Syndrome Scoring & Quantification</h3>
+    </div>
+    <div className="space-y-4">
+      {scores.map((s, idx) => {
+        const pct = s.criteriaTotal > 0 ? Math.round((s.criteriaMet / s.criteriaTotal) * 100) : 0;
+        return (
+          <div key={idx} className="glass-panel rounded-2xl p-6 border border-white/60 hover:shadow-lg transition-all">
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h5 className="text-base font-bold text-gray-900">{s.syndromeName}</h5>
+                <p className="text-sm text-gray-500 font-medium">{s.diagnosis}</p>
+              </div>
+              <div className="text-right">
+                <div className="text-2xl font-black text-gray-900">{s.criteriaMet}/{s.criteriaTotal}</div>
+                <div className="text-[10px] font-bold text-gray-400">criteria met</div>
+              </div>
+            </div>
+            {/* Progress bar */}
+            <div className="w-full h-3 bg-gray-100 rounded-full mb-4 overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-700 ${pct >= 60 ? 'bg-red-500' : pct >= 40 ? 'bg-amber-400' : 'bg-emerald-400'}`}
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+            {/* Criteria checklist */}
+            {s.criteriaDetails.length > 0 && (
+              <div className="space-y-2 mb-3">
+                {s.criteriaDetails.map((c, ci) => (
+                  <div key={ci} className="flex items-center gap-2 text-sm">
+                    <div className={`w-5 h-5 rounded flex items-center justify-center shrink-0 ${c.status === 'MET' ? 'bg-red-100 text-red-600' : c.status === 'NOT_MET' ? 'bg-emerald-100 text-emerald-600' : 'bg-gray-100 text-gray-400'}`}>
+                      {c.status === 'MET' ? <CheckCircle2 size={12} /> : c.status === 'NOT_MET' ? <CircleCheck size={12} /> : <AlertCircle size={12} />}
+                    </div>
+                    <span className={`font-medium ${c.status === 'MET' ? 'text-gray-900' : 'text-gray-500'}`}>{c.criterion}</span>
+                    {c.value && <span className="ml-auto text-xs text-gray-400 font-semibold">{c.value}</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex items-center gap-4 text-[10px]">
+              <span className="font-black text-gray-400 uppercase tracking-wider">Confidence: {s.confidence}%</span>
+              {s.progressionRisk && <span className="font-bold text-amber-600">{s.progressionRisk}</span>}
+              {s.interventionEffectiveness && <span className="font-bold text-emerald-600">{s.interventionEffectiveness}</span>}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  </div>
+);
+
+const LipidRiskPanel: React.FC<{ profile: LipidRiskProfile }> = ({ profile }) => (
+  <div className="animate-fadeInUp">
+    <div className="flex items-center gap-2 mb-4">
+      <Heart size={18} className="text-rose-500" />
+      <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">Comprehensive Lipid Risk Assessment</h3>
+    </div>
+    <div className="glass-panel rounded-2xl p-6 border border-white/60">
+      {profile.ratios.length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
+          {profile.ratios.map((r, idx) => (
+            <div key={idx} className="bg-gray-50 rounded-xl p-4">
+              <div className="text-[10px] font-black text-gray-400 uppercase tracking-wider mb-1">{r.name}</div>
+              <div className="text-xl font-black text-gray-900">{r.value}</div>
+              <div className="text-[10px] font-semibold text-gray-400 mb-1">Ref: {r.reference}</div>
+              <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${r.status?.toLowerCase().includes('optimal') || r.status?.toLowerCase().includes('normal') ? 'bg-emerald-100 text-emerald-700' : r.status?.toLowerCase().includes('high') || r.status?.toLowerCase().includes('risk') ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                {r.status}
+              </span>
+              {r.interpretation && <p className="text-xs text-gray-500 font-medium mt-2">{r.interpretation}</p>}
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="text-sm text-gray-700 font-medium leading-relaxed">{profile.compositeSummary}</p>
+      <div className="flex flex-wrap gap-4 mt-3 text-xs">
+        {profile.estimatedCVDRisk && (
+          <div className="bg-rose-50 px-3 py-1.5 rounded-lg">
+            <span className="font-black text-rose-700">CVD Risk: </span>
+            <span className="font-semibold text-rose-600">{profile.estimatedCVDRisk}</span>
+          </div>
+        )}
+        {profile.primaryConcern && (
+          <div className="bg-amber-50 px-3 py-1.5 rounded-lg">
+            <span className="font-black text-amber-700">Primary Concern: </span>
+            <span className="font-semibold text-amber-600">{profile.primaryConcern}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  </div>
+);
+
+const ActionTimelinePanel: React.FC<{ timeline: ActionTimeline }> = ({ timeline }) => {
+  const sections = [
+    { key: 'immediate', label: 'This Week', items: timeline.immediate, color: 'red', icon: Zap },
+    { key: 'urgent', label: '2-4 Weeks', items: timeline.urgent, color: 'amber', icon: AlertCircle },
+    { key: 'shortTerm', label: '3 Months', items: timeline.shortTerm, color: 'blue', icon: Target },
+    { key: 'mediumTerm', label: '6 Months', items: timeline.mediumTerm, color: 'indigo', icon: Clock },
+    { key: 'longTerm', label: 'Annual', items: timeline.longTerm, color: 'gray', icon: TrendingUp },
+  ].filter(s => s.items.length > 0);
+
+  return (
+    <div className="animate-fadeInUp">
+      <div className="flex items-center gap-2 mb-4">
+        <ClipboardList size={18} className="text-indigo-500" />
+        <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">Action Timeline</h3>
+      </div>
+      <div className="space-y-4">
+        {sections.map(({ key, label, items, color, icon: Icon }) => (
+          <div key={key} className="glass-panel rounded-2xl p-5 border border-white/60">
+            <div className="flex items-center gap-2 mb-3">
+              <div className={`w-8 h-8 rounded-lg flex items-center justify-center bg-${color}-100 text-${color}-600`}>
+                <Icon size={16} />
+              </div>
+              <span className="text-sm font-bold text-gray-800">{label}</span>
+              <span className="text-[10px] font-bold text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full ml-auto">{items.length} action{items.length > 1 ? 's' : ''}</span>
+            </div>
+            <ul className="space-y-2">
+              {items.map((item, i) => (
+                <li key={i} className="text-sm text-gray-700 font-medium flex items-start gap-2">
+                  <CheckCircle2 size={14} className={`text-${color}-400 shrink-0 mt-0.5`} />
+                  {item}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+        {timeline.redFlags.length > 0 && (
+          <div className="rounded-2xl p-5 border-2 border-red-200 bg-red-50">
+            <div className="flex items-center gap-2 mb-3">
+              <TriangleAlert size={18} className="text-red-600" />
+              <span className="text-sm font-bold text-red-800">Red Flags — Seek Immediate Care If</span>
+            </div>
+            <ul className="space-y-2">
+              {timeline.redFlags.map((flag, i) => (
+                <li key={i} className="text-sm text-red-700 font-semibold flex items-start gap-2">
+                  <AlertCircle size={14} className="text-red-500 shrink-0 mt-0.5" />
+                  {flag}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const ConfidenceScoringPanel: React.FC<{ scoring: ConfidenceScoring }> = ({ scoring }) => (
+  <div className="animate-fadeInUp">
+    <div className="flex items-center gap-2 mb-4">
+      <Shield size={18} className="text-blue-500" />
+      <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">Analysis Confidence</h3>
+    </div>
+    <div className="glass-panel rounded-2xl p-5 border border-white/60">
+      <div className="flex items-center gap-4 mb-4">
+        <div className="relative w-16 h-16">
+          <svg viewBox="0 0 36 36" className="w-full h-full -rotate-90">
+            <circle cx="18" cy="18" r="15.9" fill="none" stroke="#e5e7eb" strokeWidth="3" />
+            <circle cx="18" cy="18" r="15.9" fill="none"
+              stroke={scoring.overall >= 70 ? '#22c55e' : scoring.overall >= 40 ? '#f59e0b' : '#ef4444'}
+              strokeWidth="3" strokeDasharray={`${scoring.overall} ${100 - scoring.overall}`} strokeLinecap="round" />
+          </svg>
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className="text-sm font-black text-gray-900">{scoring.overall}%</span>
+          </div>
+        </div>
+        <div>
+          <p className="text-sm font-bold text-gray-800">
+            {scoring.overall >= 70 ? 'High confidence analysis' : scoring.overall >= 40 ? 'Moderate confidence — some data gaps' : 'Low confidence — significant data missing'}
+          </p>
+        </div>
+      </div>
+      {scoring.missingData.length > 0 && (
+        <div className="mb-3">
+          <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider block mb-1.5">Missing Data</span>
+          <div className="flex flex-wrap gap-2">
+            {scoring.missingData.map((item, i) => (
+              <span key={i} className="text-xs font-semibold bg-amber-50 text-amber-700 px-2.5 py-1 rounded-lg">{item}</span>
+            ))}
+          </div>
+        </div>
+      )}
+      {scoring.limitations.length > 0 && (
+        <div>
+          <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider block mb-1.5">Limitations</span>
+          <ul className="space-y-1">
+            {scoring.limitations.map((item, i) => (
+              <li key={i} className="text-xs text-gray-500 font-medium flex items-start gap-2">
+                <Info size={11} className="text-gray-400 shrink-0 mt-0.5" /> {item}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  </div>
+);
+
+const ClinicalSummaryPanel: React.FC<{ items: ClinicalSummaryItem[] }> = ({ items }) => {
+  const statusStyles: Record<string, string> = {
+    confirmed: 'bg-red-100 text-red-700',
+    probable: 'bg-amber-100 text-amber-700',
+    investigate: 'bg-purple-100 text-purple-700',
+    stable: 'bg-emerald-100 text-emerald-700'
+  };
+  return (
+    <div className="animate-fadeInUp">
+      <div className="flex items-center gap-2 mb-4">
+        <Scan size={18} className="text-gray-600" />
+        <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">Clinical Findings Summary</h3>
+      </div>
+      <div className="glass-panel rounded-2xl p-5 border border-white/60">
+        <div className="space-y-2">
+          {items.map((item, idx) => (
+            <div key={idx} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
+              <span className="text-sm text-gray-700 font-medium flex-1 mr-3">{item.finding}</span>
+              <span className={`shrink-0 text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full ${statusStyles[item.status] || statusStyles.investigate}`}>
+                {item.status}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const DisclaimerFooter: React.FC = () => (
   <div className="animate-fadeInUp delay-700">
     <div className="bg-gradient-to-r from-gray-50 to-blue-50 rounded-2xl p-6 border border-gray-100 flex items-start gap-4">
@@ -1041,10 +1376,19 @@ export const ModuleAnalysis: React.FC = () => {
     summaryReady: false,
   });
 
+  // Initialize component with cached data if available
   useEffect(() => {
     (async () => {
       const data = await getHistory();
       setHistory(data);
+
+      // Try to restore from cache
+      const cached = analysisCache.getAnalysis();
+      if (cached) {
+        setCurrentAnalysis(cached.analysis);
+        setCurrentReport(cached.report);
+        setPipeline(cached.pipeline);
+      }
     })();
   }, []);
 
@@ -1060,6 +1404,9 @@ export const ModuleAnalysis: React.FC = () => {
     setError(null);
     setIsProcessing(false);
     setPipeline({ current: 'upload', uploadComplete: false, extractionComplete: false, reasoningComplete: false, summaryReady: false });
+    
+    // Clear cache when resetting
+    analysisCache.clearAnalysis();
   };
 
   const handleFileUpload = useCallback(async (files: FileList) => {
@@ -1093,6 +1440,10 @@ export const ModuleAnalysis: React.FC = () => {
         revokePreview(prev);
         return fileObj;
       });
+      
+      // Cache file metadata
+      analysisCache.saveFileMetadata(fileObj);
+      
       setPipeline({ current: 'extraction', uploadComplete: true, extractionComplete: false, reasoningComplete: false, summaryReady: false });
 
       const { analysis, extractedRecord } = await processMedicalReport(
@@ -1108,6 +1459,13 @@ export const ModuleAnalysis: React.FC = () => {
       setCurrentAnalysis(analysis);
       setCurrentReport(extractedRecord);
       setIsProcessing(false);
+
+      // Save to cache so data persists across tab switches
+      analysisCache.saveAnalysis(
+        analysis,
+        extractedRecord,
+        { current: 'complete', uploadComplete: true, extractionComplete: true, reasoningComplete: true, summaryReady: true }
+      );
 
       const recordToSave: MedicalReport = {
         ...extractedRecord,
@@ -1131,8 +1489,9 @@ export const ModuleAnalysis: React.FC = () => {
         } else {
           setHistory(prev => [recordToSave, ...prev.filter(item => item.id !== recordToSave.id)]);
         }
-      } catch (saveError) {
+      } catch (saveError: any) {
         console.error('Failed to save analyzed report:', saveError);
+        setError(`Failed to save report: ${saveError.message || 'Unknown error. Please try again.'}`);
       }
     } catch (err: any) {
       setIsProcessing(false);
@@ -1287,6 +1646,35 @@ export const ModuleAnalysis: React.FC = () => {
               />
 
               {history.length >= 2 && <BiomarkerTrendChart history={history} />}
+
+              {/* ── 5-Layer Refined Analysis ──────────────────── */}
+              {currentAnalysis.clinicalSummaryItems && currentAnalysis.clinicalSummaryItems.length > 0 && (
+                <ClinicalSummaryPanel items={currentAnalysis.clinicalSummaryItems} />
+              )}
+
+              {currentAnalysis.unusualFindings && currentAnalysis.unusualFindings.length > 0 && (
+                <UnusualFindingsPanel findings={currentAnalysis.unusualFindings} />
+              )}
+
+              {currentAnalysis.borderlineFindings && currentAnalysis.borderlineFindings.length > 0 && (
+                <BorderlineFindingsPanel findings={currentAnalysis.borderlineFindings} />
+              )}
+
+              {currentAnalysis.syndromeScores && currentAnalysis.syndromeScores.length > 0 && (
+                <SyndromeScoresPanel scores={currentAnalysis.syndromeScores} />
+              )}
+
+              {currentAnalysis.lipidRiskProfile && (
+                <LipidRiskPanel profile={currentAnalysis.lipidRiskProfile} />
+              )}
+
+              {currentAnalysis.actionTimeline && (
+                <ActionTimelinePanel timeline={currentAnalysis.actionTimeline} />
+              )}
+
+              {currentAnalysis.confidenceScoring && (
+                <ConfidenceScoringPanel scoring={currentAnalysis.confidenceScoring} />
+              )}
 
               <DetailedInterpretation
                 risks={currentAnalysis.risks}

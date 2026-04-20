@@ -89,6 +89,8 @@ export interface MedicalReport {
   date: string;
   type: string;
   biomarkers: Biomarker[];
+  findings?: string[];
+  summary?: string;
   prescriptions?: Medication[];
   interventions?: LifestyleIntervention[];
   analysis?: MedicalReportAnalysis;
@@ -111,6 +113,74 @@ export interface ComparativeMetric {
   status: 'Normal' | 'Warning' | 'Critical';
 }
 
+// --- 5-Layer Refined Analysis Types ---
+
+export type FindingUrgency = 'IMMEDIATE' | 'URGENT' | 'ROUTINE' | 'INVESTIGATE';
+
+export interface UnusualFinding {
+  testName: string;
+  result: number;
+  unit: string;
+  referenceRange: string;
+  deviation: string;
+  expectedCauses: string[];
+  clinicalSignificance: string;
+  nextSteps: string[];
+  urgency: FindingUrgency;
+}
+
+export interface BorderlineFinding {
+  testName: string;
+  result: number;
+  unit: string;
+  referenceRange: string;
+  boundaryType: 'UPPER' | 'LOWER';
+  distanceToAbnormal: string;
+  interpretation: string;
+  prediction: string;
+  monitoringFrequency: string;
+  actionableThreshold: string;
+  patientCounseling?: string;
+}
+
+export interface SyndromeScore {
+  syndromeName: string;
+  criteriaTotal: number;
+  criteriaMet: number;
+  criteriaDetails: { criterion: string; status: 'MET' | 'NOT_MET' | 'MISSING'; value?: string }[];
+  diagnosis: string;
+  confidence: number;
+  progressionRisk?: string;
+  interventionEffectiveness?: string;
+}
+
+export interface LipidRiskProfile {
+  ratios: { name: string; value: number; reference: string; status: string; interpretation: string }[];
+  compositeSummary: string;
+  estimatedCVDRisk?: string;
+  primaryConcern?: string;
+}
+
+export interface ActionTimeline {
+  immediate: string[];
+  urgent: string[];
+  shortTerm: string[];
+  mediumTerm: string[];
+  longTerm: string[];
+  redFlags: string[];
+}
+
+export interface ConfidenceScoring {
+  overall: number;
+  missingData: string[];
+  limitations: string[];
+}
+
+export interface ClinicalSummaryItem {
+  finding: string;
+  status: 'confirmed' | 'probable' | 'investigate' | 'stable';
+}
+
 export interface MedicalReportAnalysis {
   summary: string;
   plainLanguageSummary?: string;
@@ -126,6 +196,13 @@ export interface MedicalReportAnalysis {
 export interface AIAnalysisResult extends MedicalReportAnalysis {
   reportId: string;
   comparisons: ComparativeMetric[];
+  unusualFindings?: UnusualFinding[];
+  borderlineFindings?: BorderlineFinding[];
+  syndromeScores?: SyndromeScore[];
+  lipidRiskProfile?: LipidRiskProfile;
+  actionTimeline?: ActionTimeline;
+  confidenceScoring?: ConfidenceScoring;
+  clinicalSummaryItems?: ClinicalSummaryItem[];
 }
 
 // --- Legacy / Visualization Types ---

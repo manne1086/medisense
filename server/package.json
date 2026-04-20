@@ -19,10 +19,10 @@
     "express": "^5.2.1",
     "groq-sdk": "^0.37.0",
     "jsonwebtoken": "^9.0.3",
+    "landingai-ade": "^2.4.0",
     "mongoose": "^9.1.6",
     "multer": "^2.0.2",
     "passport": "^0.7.0",
-    "passport-google-oauth20": "^2.0.0",
-    "pdf-parse": "^2.4.5"
+    "passport-google-oauth20": "^2.0.0"
   }
 }
