@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { ModuleAnalysis } from './components/ModuleAnalysis';
 import { ModulePrescription } from './components/ModulePrescription';
@@ -6,7 +5,7 @@ import { AIDoctor } from './components/AIDoctor';
 import { MyReports } from './components/MyReports';
 import { FloatingAssistant } from './components/FloatingAssistant';
 import { AlertTriangle, Activity, FileText, Pill, ClipboardList } from './components/Icons';
-import { Login } from './components/Login';
+import { LandingPage } from './components/LandingPage';
 import { AUTH_FAILURE_MESSAGE, isAuthenticated, handleAuthCallback, logout } from './services/authService';
 
 function App() {
@@ -35,9 +34,7 @@ function App() {
 
   if (!isAuth) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-blue-50 p-4">
-        <Login message={authMessage} />
-      </div>
+      <LandingPage message={authMessage} />
     );
   }
 
