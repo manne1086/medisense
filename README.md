@@ -45,7 +45,6 @@ medisense/
 │   ├── ModulePrescription.tsx# Prescription parser
 │   ├── MyReports.tsx         # Report management
 │   ├── FloatingAssistant.tsx # Chat widget
-│   ├── Login.tsx             # OAuth login
 │   └── Icons.tsx             # Icon exports
 │
 ├── services/            # API & utility services
