@@ -104,7 +104,7 @@ app.get('/auth/google/callback',
       // Generate token with 30-day expiration for better UX
       const token = jwt.sign({ id: req.user._id }, process.env.JWT_SECRET, { expiresIn: '30d' });
       console.log("Token generated (30-day expiration), redirecting...");
-      res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}/auth-success?token=${token}`);
+      res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}/?token=${token}`);
     } catch (error) {
       console.error("Callback Error:", error);
       res.status(500).send("Authentication Error");
