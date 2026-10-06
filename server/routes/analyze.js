@@ -100,7 +100,7 @@ router.post('/', uploadMiddleware, async (req, res) => {
                         { role: "system", content: "Summarize the following medical document." },
                         { role: "user", content: truncatedText }
                     ],
-                    model: "llama-3.3-70b-versatile",
+                    model: "openai/gpt-oss-120b",
                 });
 
                 return res.json({ type: 'pdf_summary', data: { summary_text: completion.choices[0]?.message?.content || "No summary generated." } });
@@ -151,7 +151,7 @@ router.post('/', uploadMiddleware, async (req, res) => {
                                 ]
                             }
                         ],
-                        model: "meta-llama/llama-4-scout-17b-16e-instruct",
+                        model: "qwen/qwen3.8-27b",
                         temperature: 0.1,
                         response_format: { type: "json_object" }
                     });
@@ -183,7 +183,7 @@ router.post('/', uploadMiddleware, async (req, res) => {
                                 ]
                             }
                         ],
-                        model: "meta-llama/llama-4-scout-17b-16e-instruct"
+                        model: "qwen/qwen3.8-27b"
                     });
 
                     return res.json({ type: 'image_caption', data: [{ generated_text: completion.choices[0]?.message?.content }] });
@@ -213,7 +213,7 @@ router.post('/', uploadMiddleware, async (req, res) => {
                         { role: "system", content: "You are an expert pharmacist AI. Return JSON only." },
                         { role: "user", content: prompt }
                     ],
-                    model: "llama-3.3-70b-versatile",
+                    model: "openai/gpt-oss-120b",
                     temperature: 0.1,
                     response_format: { type: "json_object" }
                 });
@@ -321,7 +321,7 @@ ${truncatedText}`;
                 { role: "system", content: "You are an expert medical document parser. Extract and return ONLY valid JSON. Do not include markdown formatting. Extract ALL available medical data from the document." },
                 { role: "user", content: extractionPrompt }
             ],
-            model: "llama-3.3-70b-versatile",
+            model: "openai/gpt-oss-120b",
             temperature: 0.1,
             response_format: { type: "json_object" }
         });

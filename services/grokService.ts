@@ -27,8 +27,8 @@ import { getAuthToken, handleAuthFailure } from './authService';
 
 const API_BASE = import.meta.env.VITE_API_URL?.replace(/\/+$/, '') || 'http://localhost:5000';
 
-const GROK_MODEL_TEXT = import.meta.env.VITE_GROQ_TEXT_MODEL?.trim() || 'llama-3.3-70b-versatile';
-const GROK_MODEL_VISION = import.meta.env.VITE_GROQ_VISION_MODEL?.trim() || 'meta-llama/llama-4-scout-17b-16e-instruct';
+const GROK_MODEL_TEXT = import.meta.env.VITE_GROQ_TEXT_MODEL?.trim() || 'openai/gpt-oss-120b';
+const GROK_MODEL_VISION = import.meta.env.VITE_GROQ_VISION_MODEL?.trim() || 'qwen/qwen3.8-27b';
 
 /**
  * Calls the server-side Groq proxy instead of directly using the Groq API.

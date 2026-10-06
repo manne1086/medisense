@@ -31,7 +31,7 @@ A patient-first AI medical assistant using Retrieval-Augmented Generation (RAG) 
 **Backend:**
 - Express.js
 - MongoDB (medical records storage)
-- Groq AI API (models: llama-3.3-70b, llama-3.2-11b-vision)
+- Groq AI API (models: openai/gpt-oss-120b, qwen/qwen3.8-27b vision)
 - Landing AI ADE (PDF & document parsing)
 - OCR for PDF extraction
 
@@ -84,10 +84,15 @@ medisense/
 
 2. Create `.env.local` with your frontend config:
    ```env
-   VITE_GROQ_TEXT_MODEL=llama-3.3-70b-versatile
-   VITE_GROQ_VISION_MODEL=llama-3.2-11b-vision-preview
+   VITE_GROQ_TEXT_MODEL=openai/gpt-oss-120b
+   VITE_GROQ_VISION_MODEL=qwen/qwen3.8-27b
    VITE_API_URL=http://localhost:5000
    VITE_GOOGLE_CLIENT_ID=your_google_client_id
+   ```
+
+   For production, set `VITE_API_URL` to your Render backend URL instead, for example:
+   ```env
+   VITE_API_URL=https://medisense-eds1.onrender.com
    ```
 
 3. Start the development server:
@@ -113,6 +118,14 @@ medisense/
    LANDING_AI_API_KEY=your_landing_ai_api_key
    PORT=5000
    ```
+
+   For production on Render, also set:
+   ```env
+   FRONTEND_URL=https://medisense-two.vercel.app
+   BACKEND_URL=https://medisense-eds1.onrender.com
+   ```
+
+   `FRONTEND_URL` is used for CORS and OAuth redirects, while `BACKEND_URL` is used to build the Google callback URL.
 
 3. Start the backend:
    ```bash
